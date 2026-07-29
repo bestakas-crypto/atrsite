@@ -1,0 +1,26 @@
+{
+  "name": "ATR 그리드 분할매매 트래커",
+  "short_name": "ATR그리드",
+  "description": "코스피200 / QQQ ATR 기반 그리드 분할매매 트래커",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0f17",
+  "theme_color": "#0f1420",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
