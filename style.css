@@ -1,20 +1,20 @@
 :root {
-  --bg: #0b0f17;
-  --bg-elevated: #11161f;
-  --bg-card: #151b26;
-  --border: #232b3a;
-  --border-soft: #1b2230;
-  --text: #e6e9ef;
-  --text-dim: #8b93a5;
-  --text-faint: #5b6478;
-  --amber: #d9a02b;
-  --amber-soft: #3a2e14;
-  --amber-border: #6b5320;
-  --teal: #2ba88f;
-  --teal-soft: #123230;
-  --teal-border: #1f5c4f;
-  --green: #35c07a;
-  --red: #e05a5a;
+  --bg: #f2f3f5;
+  --bg-elevated: #ffffff;
+  --bg-card: #ffffff;
+  --border: #d5d9e0;
+  --border-soft: #e4e7ec;
+  --text: #14181f;
+  --text-dim: #4d5561;
+  --text-faint: #838b99;
+  --amber: #a06a0a;
+  --amber-soft: #fbf0d9;
+  --amber-border: #e3bd75;
+  --teal: #0e8a73;
+  --teal-soft: #e0f4f0;
+  --teal-border: #8ed4c5;
+  --green: #1a9a52;
+  --red: #cf3a3a;
   --radius: 10px;
   --radius-sm: 6px;
   font-size: 16px;
@@ -202,7 +202,7 @@ input[type="number"]:focus {
 
 .btn-danger {
   background: transparent;
-  border-color: #4a2020;
+  border-color: #e3b3b3;
   color: var(--red);
 }
 
@@ -344,6 +344,10 @@ input[type="number"]:focus {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.calc-result[hidden] {
+  display: none;
 }
 
 .calc-row {
