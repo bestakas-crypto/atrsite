@@ -2,6 +2,9 @@
   'use strict';
 
   const STORAGE_KEY = 'stock-portfolio';
+  const FX_STORAGE_KEY = 'fx-rates';
+  const FX_API_URL = 'https://api.frankfurter.dev/v1/latest';
+  const FX_DISPLAY_CURRENCIES = ['KRW', 'USD', 'JPY'];
   const LEGACY_KEYS = { kospi: 'atr-grid:kospi', qqq: 'atr-grid:qqq' };
   const LEGACY_NAMES = { kospi: '코스피200', qqq: 'QQQ' };
   const MIGRATION_SKIP_FLAG = 'atr-grid-migration-skipped';
@@ -9,6 +12,7 @@
   const PARTIAL_SELL_PRESETS = [10, 20, 30, 50];
 
   let portfolio = [];
+  let fxRates = null; // { rates: { KRW: 1, USD: 1350.5, ... }, updatedAt, source, displayCurrency }
   let currentStockId = null;
   let showAllTx = false;
   let showDrawdownTable = false;
@@ -53,6 +57,74 @@
 
   function getStock(id) {
     return portfolio.find((s) => s.id === id) || null;
+  }
+
+  // ---------- FX rates (manual + best-effort auto fetch) ----------
+  function defaultFxRates() {
+    return { rates: { KRW: 1 }, updatedAt: null, source: null, displayCurrency: 'KRW' };
+  }
+
+  function loadFxRates() {
+    const raw = localStorage.getItem(FX_STORAGE_KEY);
+    if (!raw) return defaultFxRates();
+    try {
+      const parsed = JSON.parse(raw);
+      const merged = Object.assign(defaultFxRates(), parsed);
+      merged.rates = Object.assign({ KRW: 1 }, parsed.rates);
+      return merged;
+    } catch (e) {
+      return defaultFxRates();
+    }
+  }
+
+  function saveFxRates() {
+    localStorage.setItem(FX_STORAGE_KEY, JSON.stringify(fxRates));
+  }
+
+  // amount in fromCurrency -> amount in toCurrency, or null if either rate is unknown.
+  // fxRates.rates stores "KRW value of 1 unit of that currency".
+  function convertAmount(amount, fromCurrency, toCurrency) {
+    const from = fromCurrency || 'KRW';
+    const to = toCurrency || 'KRW';
+    if (from === to) return amount;
+    const fromRate = fxRates.rates[from];
+    const toRate = fxRates.rates[to];
+    if (fromRate == null || toRate == null) return null;
+    return (amount * fromRate) / toRate;
+  }
+
+  function currenciesInUse() {
+    const set = new Set(FX_DISPLAY_CURRENCIES);
+    portfolio.forEach((s) => { if (s.currency) set.add(s.currency); });
+    set.delete('KRW');
+    return Array.from(set);
+  }
+
+  // Best-effort automatic lookup via a free, no-key exchange rate API.
+  // On any failure (offline, blocked, API down) this simply resolves to false
+  // and whatever rates are already stored (manual or previously fetched) stay in effect.
+  async function autoFetchFxRates() {
+    const need = currenciesInUse();
+    if (need.length === 0) return true;
+    try {
+      const url = `${FX_API_URL}?from=KRW&to=${encodeURIComponent(need.join(','))}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('fx http error');
+      const data = await res.json();
+      let any = false;
+      need.forEach((c) => {
+        const perKrw = data.rates && data.rates[c];
+        if (perKrw) { fxRates.rates[c] = 1 / perKrw; any = true; }
+      });
+      if (any) {
+        fxRates.updatedAt = new Date().toISOString();
+        fxRates.source = 'auto';
+        saveFxRates();
+      }
+      return any;
+    } catch (e) {
+      return false;
+    }
   }
 
   function createStock(name, currency) {
@@ -257,6 +329,13 @@
     el.totalCostSum = document.getElementById('total-cost-sum');
     el.totalChevron = document.getElementById('total-chevron');
     el.totalSummaryDetail = document.getElementById('total-summary-detail');
+    el.totalDetailRows = document.getElementById('total-detail-rows');
+    el.totalMissingNote = document.getElementById('total-missing-note');
+    el.currencySwitch = document.getElementById('currency-switch');
+    el.fxStatus = document.getElementById('fx-status');
+    el.fxRateRows = document.getElementById('fx-rate-rows');
+    el.btnFxRefresh = document.getElementById('btn-fx-refresh');
+    el.btnFxSave = document.getElementById('btn-fx-save');
     el.stockList = document.getElementById('stock-list');
     el.stockListEmpty = document.getElementById('stock-list-empty');
 
@@ -401,12 +480,10 @@
     el.stockList.innerHTML = '';
     el.stockListEmpty.hidden = portfolio.length > 0;
 
-    let totalCost = 0;
     const detailRows = [];
 
     portfolio.forEach((stock) => {
       const derived = computeDerived(stock);
-      totalCost += derived.costBasis;
       detailRows.push({ name: stock.name, cost: derived.costBasis, currency: stock.currency });
 
       const hasPrice = stock.lastPrice != null;
@@ -467,12 +544,29 @@
       el.stockList.appendChild(card);
     });
 
-    el.totalCostSum.textContent = formatMoney(totalCost, 'KRW');
+    const displayCurrency = fxRates.displayCurrency;
+    let total = 0;
+    let missingCount = 0;
+    detailRows.forEach((r) => {
+      const converted = convertAmount(r.cost, r.currency, displayCurrency);
+      if (converted == null) { missingCount++; return; }
+      total += converted;
+    });
+    el.totalCostSum.textContent = formatMoney(total, displayCurrency);
+
+    el.totalMissingNote.hidden = missingCount === 0;
+    if (missingCount > 0) {
+      el.totalMissingNote.textContent = `환율 정보가 없는 ${missingCount}개 종목은 합계에서 제외되었습니다. 아래에서 환율을 입력해주세요.`;
+    }
+
+    document.querySelectorAll('.currency-pill').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.currency === displayCurrency);
+    });
 
     el.totalSummaryDetail.hidden = !showTotalDetail;
     el.totalChevron.classList.toggle('open', showTotalDetail);
     if (showTotalDetail) {
-      el.totalSummaryDetail.innerHTML = '';
+      el.totalDetailRows.innerHTML = '';
       detailRows.forEach((r) => {
         const row = document.createElement('div');
         row.className = 'total-detail-row';
@@ -483,12 +577,50 @@
         costSpan.textContent = formatMoney(r.cost, r.currency);
         row.appendChild(nameSpan);
         row.appendChild(costSpan);
-        el.totalSummaryDetail.appendChild(row);
+        el.totalDetailRows.appendChild(row);
       });
       if (detailRows.length === 0) {
-        el.totalSummaryDetail.textContent = '등록된 종목이 없습니다.';
+        el.totalDetailRows.textContent = '등록된 종목이 없습니다.';
       }
+      renderFxSettings();
     }
+  }
+
+  function renderFxSettings() {
+    if (fxRates.updatedAt) {
+      const dt = new Date(fxRates.updatedAt);
+      const stamp = `${dt.getMonth() + 1}/${dt.getDate()} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+      el.fxStatus.textContent = fxRates.source === 'auto'
+        ? `${stamp} 자동 조회된 환율 사용 중 (필요하면 아래에서 직접 수정 가능)`
+        : `${stamp} 수동 입력한 환율 사용 중`;
+    } else {
+      el.fxStatus.textContent = '환율 자동 조회에 실패했습니다. 아래에 직접 입력해주세요.';
+    }
+
+    el.fxRateRows.innerHTML = '';
+    currenciesInUse().forEach((currency) => {
+      const row = document.createElement('div');
+      row.className = 'fx-rate-row';
+
+      const label = document.createElement('span');
+      label.textContent = `1 ${currency} =`;
+      row.appendChild(label);
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'fx-rate-input';
+      input.step = '0.01';
+      input.min = '0';
+      input.dataset.currency = currency;
+      input.value = fxRates.rates[currency] != null ? Math.round(fxRates.rates[currency] * 100) / 100 : '';
+      row.appendChild(input);
+
+      const unit = document.createElement('span');
+      unit.textContent = '원';
+      row.appendChild(unit);
+
+      el.fxRateRows.appendChild(row);
+    });
   }
 
   function cardItem(label, value) {
@@ -928,6 +1060,34 @@
       renderList();
     });
 
+    el.currencySwitch.addEventListener('click', (e) => {
+      const btn = e.target.closest('.currency-pill');
+      if (!btn) return;
+      fxRates.displayCurrency = btn.dataset.currency;
+      saveFxRates();
+      renderList();
+    });
+
+    el.btnFxRefresh.addEventListener('click', async () => {
+      el.fxStatus.textContent = '환율을 조회하는 중...';
+      const ok = await autoFetchFxRates();
+      renderList();
+      showToast(ok ? '환율을 새로 조회했습니다.' : '환율 자동 조회에 실패했습니다. 직접 입력해주세요.');
+    });
+
+    el.btnFxSave.addEventListener('click', () => {
+      const inputs = el.fxRateRows.querySelectorAll('.fx-rate-input');
+      inputs.forEach((input) => {
+        const val = num(input.value);
+        if (val != null && val > 0) fxRates.rates[input.dataset.currency] = val;
+      });
+      fxRates.updatedAt = new Date().toISOString();
+      fxRates.source = 'manual';
+      saveFxRates();
+      renderList();
+      showToast('환율이 저장되었습니다.');
+    });
+
     el.stockList.addEventListener('click', (e) => {
       const menuBtn = e.target.closest('.stock-card-menu');
       if (menuBtn) {
@@ -1011,6 +1171,7 @@
   function init() {
     cacheDom();
     portfolio = loadPortfolio();
+    fxRates = loadFxRates();
     bindEvents();
 
     window.addEventListener('popstate', (e) => {
@@ -1023,9 +1184,22 @@
     checkLegacyMigration();
     renderListView();
 
+    // Best-effort background refresh; renderList() again once it settles (or fails silently).
+    autoFetchFxRates().then(() => {
+      if (!currentStockId) renderList();
+    });
+
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('service-worker.js').catch(() => {});
+      });
+      // When a newly deployed service worker takes over, reload once so the
+      // page (and cached assets) reflect the latest version instead of a stale copy.
+      let swRefreshed = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (swRefreshed) return;
+        swRefreshed = true;
+        location.reload();
       });
     }
   }

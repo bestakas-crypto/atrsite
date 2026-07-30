@@ -33,11 +33,29 @@
       <button id="btn-add-stock" class="btn btn-primary">+ 종목 추가</button>
     </div>
 
-    <button id="btn-toggle-total" class="total-summary-toggle">
-      <span>전체 매입금액 합계: <span id="total-cost-sum" class="mono">-</span></span>
-      <span class="chevron" id="total-chevron">▾</span>
-    </button>
-    <div id="total-summary-detail" class="total-summary-detail" hidden></div>
+    <div class="total-summary-block">
+      <button id="btn-toggle-total" class="total-summary-toggle">
+        <span>전체 매입금액 합계: <span id="total-cost-sum" class="mono">-</span></span>
+        <span class="chevron" id="total-chevron">▾</span>
+      </button>
+      <div class="currency-switch" id="currency-switch">
+        <button type="button" class="currency-pill" data-currency="KRW">KRW</button>
+        <button type="button" class="currency-pill" data-currency="USD">USD</button>
+        <button type="button" class="currency-pill" data-currency="JPY">JPY</button>
+      </div>
+      <p class="total-missing-note" id="total-missing-note" hidden></p>
+    </div>
+    <div id="total-summary-detail" class="total-summary-detail" hidden>
+      <div id="total-detail-rows"></div>
+      <div class="fx-settings">
+        <p class="fx-status" id="fx-status"></p>
+        <div id="fx-rate-rows"></div>
+        <div class="fx-actions">
+          <button type="button" id="btn-fx-refresh" class="link-btn">환율 자동 새로고침</button>
+          <button type="button" id="btn-fx-save" class="btn btn-secondary btn-block">수동 입력 환율 저장</button>
+        </div>
+      </div>
+    </div>
 
     <div id="stock-list" class="stock-list"></div>
     <p id="stock-list-empty" class="empty-hint" hidden>등록된 종목이 없습니다. "+ 종목 추가"로 시작하세요.</p>
