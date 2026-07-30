@@ -1,8 +1,8 @@
 (() => {
   'use strict';
 
-  const TOTAL_ROUNDS = 12;
-  const WEIGHT_SUM = (TOTAL_ROUNDS * (TOTAL_ROUNDS + 1)) / 2; // 78
+  const DEFAULT_ROUND_AMOUNT = 10000000;
+  const DEFAULT_TOTAL_ROUNDS = 10;
   const STORAGE_PREFIX = 'atr-grid:';
   const ASSET_LABELS = { kospi: '코스피200', qqq: 'QQQ' };
 
@@ -16,7 +16,8 @@
 
   function defaultState() {
     return {
-      totalCapital: 0,
+      roundAmount: DEFAULT_ROUND_AMOUNT,
+      totalRounds: DEFAULT_TOTAL_ROUNDS,
       k: 1,
       initialEntryPrice: 0,
       started: false,
@@ -29,20 +30,31 @@
   function loadState(asset) {
     const raw = localStorage.getItem(storageKey(asset));
     if (!raw) return defaultState();
+    let parsed;
     try {
-      const parsed = JSON.parse(raw);
-      return Object.assign(defaultState(), parsed);
+      parsed = JSON.parse(raw);
     } catch (e) {
+      showToast('저장된 데이터를 읽을 수 없어 초기 상태로 불러옵니다.');
       return defaultState();
     }
+
+    const isLegacy = typeof parsed.roundAmount === 'undefined';
+    const merged = Object.assign(defaultState(), parsed);
+
+    if (isLegacy) {
+      delete merged.totalCapital;
+      if (merged.holdings.length > merged.totalRounds) {
+        merged.totalRounds = merged.holdings.length;
+      }
+      localStorage.setItem(storageKey(asset), JSON.stringify(merged));
+      showToast('기존 데이터를 새 회차 구조(회차당 1,000만원 · 총 10회차)로 이전했습니다.');
+    }
+
+    return merged;
   }
 
   function saveState() {
     localStorage.setItem(storageKey(currentAsset), JSON.stringify(state));
-  }
-
-  function getUnit() {
-    return state.totalCapital / WEIGHT_SUM;
   }
 
   function todayStr() {
@@ -76,13 +88,15 @@
   function cacheDom() {
     el.setupPanel = document.getElementById('setup-panel');
     el.trackerPanel = document.getElementById('tracker-panel');
-    el.setupTotalCapital = document.getElementById('setup-total-capital');
+    el.setupRoundAmount = document.getElementById('setup-round-amount');
+    el.setupTotalRounds = document.getElementById('setup-total-rounds');
+    el.setupTotalPreviewValue = document.getElementById('setup-total-preview-value');
     el.setupK = document.getElementById('setup-k');
     el.setupEntryPrice = document.getElementById('setup-entry-price');
     el.setupEntryAtr = document.getElementById('setup-entry-atr');
     el.btnStartGrid = document.getElementById('btn-start-grid');
 
-    el.statTotalCapital = document.getElementById('stat-total-capital');
+    el.statTotalPlanned = document.getElementById('stat-total-planned');
     el.statInvested = document.getElementById('stat-invested');
     el.statRound = document.getElementById('stat-round');
     el.statBasePrice = document.getElementById('stat-base-price');
@@ -152,6 +166,7 @@
     if (!state.started) {
       el.setupPanel.hidden = false;
       el.trackerPanel.hidden = true;
+      updateSetupTotalPreview();
       return;
     }
     el.setupPanel.hidden = true;
@@ -167,16 +182,15 @@
 
   function renderStats() {
     const invested = state.holdings.reduce((sum, h) => sum + h.amount, 0);
-    el.statTotalCapital.textContent = formatMoney(state.totalCapital);
+    el.statTotalPlanned.textContent = formatMoney(state.roundAmount * state.totalRounds);
     el.statInvested.textContent = formatMoney(invested);
-    el.statRound.textContent = `${state.holdings.length} / ${TOTAL_ROUNDS}`;
+    el.statRound.textContent = `${state.holdings.length} / ${state.totalRounds}`;
     el.statBasePrice.textContent = formatPrice(state.basePrice);
   }
 
   function renderLadder() {
-    const unit = getUnit();
     el.ladder.innerHTML = '';
-    for (let round = 1; round <= TOTAL_ROUNDS; round++) {
+    for (let round = 1; round <= state.totalRounds; round++) {
       const row = document.createElement('div');
       row.className = 'ladder-row';
 
@@ -189,19 +203,18 @@
       track.className = 'ladder-bar-track';
 
       const bar = document.createElement('div');
-      const widthPct = 30 + ((round - 1) / (TOTAL_ROUNDS - 1)) * 70;
-      bar.style.width = widthPct + '%';
+      bar.style.width = '100%';
 
       if (round <= state.holdings.length) {
         bar.className = 'ladder-bar filled';
         const h = state.holdings[round - 1];
-        bar.textContent = formatPrice(h.price);
+        bar.textContent = `${formatPrice(h.price)} 매수 · ${formatMoney(h.amount)}`;
       } else if (round === state.holdings.length + 1) {
         bar.className = 'ladder-bar next';
-        bar.textContent = '다음 매수 예정';
+        bar.textContent = `다음 매수 예정 · ${formatMoney(state.roundAmount)}`;
       } else {
         bar.className = 'ladder-bar';
-        bar.textContent = '';
+        bar.textContent = formatMoney(state.roundAmount);
       }
 
       track.appendChild(bar);
@@ -304,11 +317,11 @@
   }
 
   function updateActionButtons() {
-    const canBuy = state.holdings.length < TOTAL_ROUNDS;
+    const canBuy = state.holdings.length < state.totalRounds;
     const canSell = state.holdings.length > 0;
 
     el.btnBuyFill.disabled = !canBuy;
-    el.buyFillNote.textContent = canBuy ? '' : '12회차를 모두 소진했습니다.';
+    el.buyFillNote.textContent = canBuy ? '' : `${state.totalRounds}회차를 모두 소진했습니다.`;
 
     el.btnSellFill.disabled = !canSell;
     el.sellFillNote.textContent = canSell ? '' : '보유 물량이 없습니다.';
@@ -325,18 +338,17 @@
       showToast('ATR값을 올바르게 입력하세요.');
       return;
     }
-    const unit = getUnit();
     const basePrice = state.basePrice;
 
     // Buy side
-    if (state.holdings.length >= TOTAL_ROUNDS) {
+    if (state.holdings.length >= state.totalRounds) {
       el.calcBuyRound.textContent = '';
       el.calcBuyPrice.textContent = '회차 소진';
-      el.calcBuyAmount.textContent = '12회차를 모두 사용했습니다.';
+      el.calcBuyAmount.textContent = `${state.totalRounds}회차를 모두 사용했습니다.`;
     } else {
       const nextRound = state.holdings.length + 1;
       const buyPrice = basePrice - atr * state.k;
-      const buyAmount = nextRound * unit;
+      const buyAmount = state.roundAmount;
       el.calcBuyRound.textContent = `${nextRound}회차 예정`;
       el.calcBuyPrice.textContent = formatPrice(buyPrice);
       el.calcBuyAmount.textContent = `예정 투입금액 ${formatMoney(buyAmount)}`;
@@ -362,14 +374,29 @@
   }
 
   // ---------- Setup ----------
+  function updateSetupTotalPreview() {
+    const roundAmount = parseFloat(el.setupRoundAmount.value);
+    const totalRounds = parseFloat(el.setupTotalRounds.value);
+    if (!isFinite(roundAmount) || roundAmount < 0 || !isFinite(totalRounds) || totalRounds <= 0) {
+      el.setupTotalPreviewValue.textContent = '-';
+      return;
+    }
+    el.setupTotalPreviewValue.textContent = formatMoney(roundAmount * totalRounds);
+  }
+
   function handleStartGrid() {
-    const totalCapital = parseFloat(el.setupTotalCapital.value);
+    const roundAmount = parseFloat(el.setupRoundAmount.value);
+    const totalRounds = parseInt(el.setupTotalRounds.value, 10);
     const k = parseFloat(el.setupK.value);
     const entryPrice = parseFloat(el.setupEntryPrice.value);
     const entryAtr = parseFloat(el.setupEntryAtr.value);
 
-    if (!isFinite(totalCapital) || totalCapital <= 0) {
-      showToast('총 투자금을 올바르게 입력하세요.');
+    if (!isFinite(roundAmount) || roundAmount <= 0) {
+      showToast('회차당 투입금액을 올바르게 입력하세요.');
+      return;
+    }
+    if (!isFinite(totalRounds) || totalRounds <= 0) {
+      showToast('총 회차 수를 올바르게 입력하세요.');
       return;
     }
     if (!isFinite(k) || k <= 0) {
@@ -386,14 +413,14 @@
     }
 
     state = defaultState();
-    state.totalCapital = totalCapital;
+    state.roundAmount = roundAmount;
+    state.totalRounds = totalRounds;
     state.k = k;
     state.initialEntryPrice = entryPrice;
     state.started = true;
     state.basePrice = entryPrice;
 
-    const unit = totalCapital / WEIGHT_SUM;
-    const amount = 1 * unit;
+    const amount = roundAmount;
     const qty = amount / entryPrice;
     const date = todayStr();
 
@@ -410,7 +437,7 @@
 
   // ---------- Fill registration ----------
   function handleBuyFill() {
-    if (state.holdings.length >= TOTAL_ROUNDS) return;
+    if (state.holdings.length >= state.totalRounds) return;
     const price = parseFloat(el.buyFillPrice.value);
     if (!isFinite(price) || price <= 0) {
       showToast('매수 체결가를 올바르게 입력하세요.');
@@ -419,9 +446,8 @@
     const atr = parseFloat(el.todayAtr.value);
     const atrValue = isFinite(atr) && atr >= 0 ? atr : 0;
 
-    const unit = getUnit();
     const round = state.holdings.length + 1;
-    const amount = round * unit;
+    const amount = state.roundAmount;
     const qty = amount / price;
     const date = todayStr();
 
@@ -501,6 +527,8 @@
       btn.addEventListener('click', () => switchAsset(btn.dataset.asset));
     });
     el.btnStartGrid.addEventListener('click', handleStartGrid);
+    el.setupRoundAmount.addEventListener('input', updateSetupTotalPreview);
+    el.setupTotalRounds.addEventListener('input', updateSetupTotalPreview);
     el.btnCalc.addEventListener('click', handleCalc);
     el.btnBuyFill.addEventListener('click', handleBuyFill);
     el.btnSellFill.addEventListener('click', handleSellFill);

@@ -114,6 +114,22 @@ input[type="number"] {
   margin: -4px 0 16px;
 }
 
+.setup-total-preview {
+  font-size: 13px;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: -2px 0 16px;
+}
+
+.setup-total-preview span {
+  font-family: "SFMono-Regular", "Consolas", "Menlo", "Roboto Mono", monospace;
+  font-weight: 700;
+  color: var(--amber);
+}
+
 /* Fields */
 .field-group {
   margin-bottom: 14px;

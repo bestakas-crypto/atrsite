@@ -31,9 +31,14 @@
     <h2 class="panel-title">최초 설정</h2>
     <p class="setup-hint">이 자산의 그리드를 시작하기 위한 초기값을 입력하세요.</p>
     <div class="field-group">
-      <label for="setup-total-capital">총 투자금 (원)</label>
-      <input type="number" id="setup-total-capital" inputmode="numeric" value="100000000" min="0" step="1" />
+      <label for="setup-round-amount">회차당 투입금액 (원)</label>
+      <input type="number" id="setup-round-amount" inputmode="numeric" value="10000000" min="0" step="1" />
     </div>
+    <div class="field-group">
+      <label for="setup-total-rounds">총 회차 수</label>
+      <input type="number" id="setup-total-rounds" inputmode="numeric" value="10" min="1" step="1" />
+    </div>
+    <p class="setup-total-preview">총 투입 예정금액: <span id="setup-total-preview-value">-</span></p>
     <div class="field-group">
       <label for="setup-k">ATR 배수 (k)</label>
       <input type="number" id="setup-k" inputmode="decimal" value="1.0" min="0" step="0.1" />
@@ -55,8 +60,8 @@
     <!-- 통계 카드 -->
     <section class="stats-grid">
       <div class="stat-card">
-        <span class="stat-label">총 투자금</span>
-        <span class="stat-value" id="stat-total-capital">-</span>
+        <span class="stat-label">총 투입 예정금액</span>
+        <span class="stat-value" id="stat-total-planned">-</span>
       </div>
       <div class="stat-card">
         <span class="stat-label">누적 투입금액</span>
@@ -95,7 +100,7 @@
 
     <!-- 그리드 사다리 시각화 -->
     <section class="panel">
-      <h2 class="panel-title">그리드 사다리 (1~12회차)</h2>
+      <h2 class="panel-title">그리드 사다리</h2>
       <div id="ladder" class="ladder"></div>
       <div class="ladder-legend">
         <span class="legend-item"><i class="legend-swatch filled"></i>체결 완료</span>
