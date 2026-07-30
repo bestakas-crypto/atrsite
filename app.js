@@ -246,7 +246,9 @@
   // ---------- DOM refs ----------
   const el = {};
   function cacheDom() {
-    el.btnBack = document.getElementById('btn-back');
+    el.btnNavBack = document.getElementById('btn-nav-back');
+    el.btnNavForward = document.getElementById('btn-nav-forward');
+    el.btnNavRefresh = document.getElementById('btn-nav-refresh');
     el.headerTitle = document.getElementById('header-title');
 
     el.viewList = document.getElementById('view-list');
@@ -352,26 +354,27 @@
   }
 
   // ---------- Navigation ----------
-  function showListView() {
+  // renderListView/renderDetailView only update the DOM. navigateToList/navigateToDetail
+  // additionally push a browser history entry so the header back/forward buttons
+  // (and the device's own back gesture) work like real navigation.
+  function renderListView() {
     currentStockId = null;
     el.viewList.hidden = false;
     el.viewDetail.hidden = true;
     el.stickyActions.hidden = true;
-    el.btnBack.hidden = true;
     el.headerTitle.textContent = '분할매매 트래커';
     renderList();
   }
 
-  function showDetailView(stockId) {
+  function renderDetailView(stockId) {
     const stock = getStock(stockId);
-    if (!stock) { showListView(); return; }
+    if (!stock) { renderListView(); return; }
     currentStockId = stockId;
     showAllTx = false;
     showDrawdownTable = false;
     el.viewList.hidden = true;
     el.viewDetail.hidden = false;
     el.stickyActions.hidden = false;
-    el.btnBack.hidden = false;
     el.headerTitle.textContent = stock.name;
 
     el.inputCurrentPrice.value = stock.lastPrice != null ? stock.lastPrice : '';
@@ -381,6 +384,16 @@
     el.settingsDetails.open = false;
 
     renderDetail();
+  }
+
+  function navigateToList() {
+    history.pushState({ view: 'list' }, '', '#list');
+    renderListView();
+  }
+
+  function navigateToDetail(stockId) {
+    history.pushState({ view: 'detail', id: stockId }, '', '#detail/' + stockId);
+    renderDetailView(stockId);
   }
 
   // ---------- Render: List ----------
@@ -488,7 +501,7 @@
   // ---------- Render: Detail ----------
   function renderDetail() {
     const stock = getStock(currentStockId);
-    if (!stock) { showListView(); return; }
+    if (!stock) { renderListView(); return; }
     const derived = computeDerived(stock);
 
     el.dAvgPrice.textContent = formatPrice(derived.avgPrice);
@@ -770,7 +783,7 @@
     portfolio.push(stock);
     savePortfolio();
     el.modalAddStock.hidden = true;
-    showDetailView(stock.id);
+    navigateToDetail(stock.id);
   }
 
   function handleSaveSettings() {
@@ -817,7 +830,7 @@
     askConfirm(`'${stock.name}' 종목을 삭제합니다. 이 작업은 되돌릴 수 없습니다.`, () => {
       portfolio = portfolio.filter((s) => s.id !== currentStockId);
       savePortfolio();
-      showListView();
+      history.back();
       showToast('종목이 삭제되었습니다.');
     });
   }
@@ -873,7 +886,9 @@
 
   // ---------- Init ----------
   function bindEvents() {
-    el.btnBack.addEventListener('click', showListView);
+    el.btnNavBack.addEventListener('click', () => history.back());
+    el.btnNavForward.addEventListener('click', () => history.forward());
+    el.btnNavRefresh.addEventListener('click', () => location.reload());
 
     el.btnAddStock.addEventListener('click', () => {
       el.addStockName.value = '';
@@ -890,7 +905,7 @@
 
     el.stockList.addEventListener('click', (e) => {
       const card = e.target.closest('.stock-card');
-      if (card) showDetailView(card.dataset.id);
+      if (card) navigateToDetail(card.dataset.id);
     });
 
     el.inputCurrentPrice.addEventListener('input', renderDetail);
@@ -966,8 +981,16 @@
     cacheDom();
     portfolio = loadPortfolio();
     bindEvents();
+
+    window.addEventListener('popstate', (e) => {
+      const state = e.state;
+      if (state && state.view === 'detail') renderDetailView(state.id);
+      else renderListView();
+    });
+    history.replaceState({ view: 'list' }, '', '#list');
+
     checkLegacyMigration();
-    showListView();
+    renderListView();
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {

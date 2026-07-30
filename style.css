@@ -1,34 +1,34 @@
 :root {
-  --bg: #0b0f17;
-  --bg-elevated: #11161f;
-  --bg-card: #151b26;
-  --border: #232b3a;
-  --border-soft: #1b2230;
-  --text: #e6e9ef;
-  --text-dim: #8b93a5;
-  --text-faint: #5b6478;
+  --bg: #f2f3f5;
+  --bg-elevated: #ffffff;
+  --bg-card: #ffffff;
+  --border: #d5d9e0;
+  --border-soft: #e4e7ec;
+  --text: #14181f;
+  --text-dim: #4d5561;
+  --text-faint: #838b99;
 
-  --amber: #d9a02b;
-  --amber-soft: #3a2e14;
-  --amber-border: #6b5320;
+  --amber: #a06a0a;
+  --amber-soft: #fbf0d9;
+  --amber-border: #e3bd75;
 
-  --teal: #2ba88f;
-  --teal-soft: #123230;
-  --teal-border: #1f5c4f;
+  --teal: #0e8a73;
+  --teal-soft: #e0f4f0;
+  --teal-border: #8ed4c5;
 
-  --green: #35c07a;
-  --red: #e05a5a;
-  --orange: #e0902b;
-  --yellow: #d9c22b;
+  --green: #1a9a52;
+  --red: #cf3a3a;
+  --orange: #c06a0a;
+  --yellow: #93820a;
 
-  --red-soft: #3a1414;
-  --red-border: #6b2020;
-  --orange-soft: #3a2a14;
-  --orange-border: #6b4a20;
-  --green-soft: #133a22;
-  --green-border: #1f6b3f;
-  --yellow-soft: #35331a;
-  --yellow-border: #62592c;
+  --red-soft: #fbe3e3;
+  --red-border: #eaa8a8;
+  --orange-soft: #fbebd9;
+  --orange-border: #e3b875;
+  --green-soft: #e0f5e8;
+  --green-border: #8ed9ac;
+  --yellow-soft: #f7f2d9;
+  --yellow-border: #d9c875;
 
   --radius: 10px;
   --radius-sm: 6px;
@@ -77,17 +77,32 @@ input[type="number"] {
   margin: 0;
   color: var(--text-dim);
   letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .icon-btn {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 40px;
+  min-height: 40px;
   background: transparent;
   border: none;
-  color: var(--text);
-  font-size: 20px;
+  color: var(--text-dim);
+  font-size: 18px;
   cursor: pointer;
   border-radius: var(--radius-sm);
+}
+
+.icon-btn:active {
+  background: var(--bg);
+  color: var(--text);
 }
 
 .icon-btn[hidden] {
@@ -236,7 +251,7 @@ input:focus {
 
 .btn-danger {
   background: transparent;
-  border-color: #4a2020;
+  border-color: var(--red-border);
   color: var(--red);
 }
 
