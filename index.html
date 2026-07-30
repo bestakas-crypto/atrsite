@@ -72,6 +72,27 @@
       </div>
     </section>
 
+    <!-- 보유 현황 -->
+    <section class="panel">
+      <h2 class="panel-title">보유 현황 (진입 내역)</h2>
+      <div class="table-wrap">
+        <table class="holdings-table" id="holdings-table">
+          <thead>
+            <tr>
+              <th>회차</th>
+              <th>매수일</th>
+              <th>매수가</th>
+              <th>수량</th>
+              <th>투입금액</th>
+            </tr>
+          </thead>
+          <tbody id="holdings-body">
+          </tbody>
+        </table>
+        <p id="holdings-empty" class="history-empty">보유 중인 회차가 없습니다.</p>
+      </div>
+    </section>
+
     <!-- 그리드 사다리 시각화 -->
     <section class="panel">
       <h2 class="panel-title">그리드 사다리 (1~12회차)</h2>
@@ -147,6 +168,7 @@
               <th>날짜</th>
               <th>ATR</th>
               <th>체결가</th>
+              <th>수량</th>
               <th>금액</th>
               <th>손익</th>
             </tr>

@@ -109,6 +109,9 @@
     el.historyBody = document.getElementById('history-body');
     el.historyEmpty = document.getElementById('history-empty');
 
+    el.holdingsBody = document.getElementById('holdings-body');
+    el.holdingsEmpty = document.getElementById('holdings-empty');
+
     el.btnResetAsset = document.getElementById('btn-reset-asset');
 
     el.confirmModal = document.getElementById('confirm-modal');
@@ -155,6 +158,7 @@
     el.trackerPanel.hidden = false;
 
     renderStats();
+    renderHoldings();
     renderLadder();
     renderHistory();
     updateActionButtons();
@@ -206,6 +210,44 @@
     }
   }
 
+  function renderHoldings() {
+    el.holdingsBody.innerHTML = '';
+    if (state.holdings.length === 0) {
+      el.holdingsEmpty.hidden = false;
+      return;
+    }
+    el.holdingsEmpty.hidden = true;
+
+    state.holdings.forEach((h) => {
+      const tr = document.createElement('tr');
+
+      const tdRound = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'holdings-round-badge';
+      badge.textContent = `${h.round}`;
+      tdRound.appendChild(badge);
+      tr.appendChild(tdRound);
+
+      const tdDate = document.createElement('td');
+      tdDate.textContent = h.date;
+      tr.appendChild(tdDate);
+
+      const tdPrice = document.createElement('td');
+      tdPrice.textContent = formatPrice(h.price);
+      tr.appendChild(tdPrice);
+
+      const tdQty = document.createElement('td');
+      tdQty.textContent = formatQty(h.qty);
+      tr.appendChild(tdQty);
+
+      const tdAmount = document.createElement('td');
+      tdAmount.textContent = formatMoney(h.amount);
+      tr.appendChild(tdAmount);
+
+      el.holdingsBody.appendChild(tr);
+    });
+  }
+
   function renderHistory() {
     el.historyBody.innerHTML = '';
     if (state.history.length === 0) {
@@ -239,6 +281,10 @@
       const tdPrice = document.createElement('td');
       tdPrice.textContent = formatPrice(rec.price);
       tr.appendChild(tdPrice);
+
+      const tdQty = document.createElement('td');
+      tdQty.textContent = formatQty(rec.qty);
+      tr.appendChild(tdQty);
 
       const tdAmount = document.createElement('td');
       tdAmount.textContent = formatMoney(rec.amount);
