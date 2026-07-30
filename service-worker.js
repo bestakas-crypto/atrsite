@@ -1,4 +1,4 @@
-const CACHE_NAME = 'atr-grid-cache-v1';
+const CACHE_NAME = 'stock-portfolio-cache-v2';
 const PRECACHE_URLS = [
   './',
   './index.html',

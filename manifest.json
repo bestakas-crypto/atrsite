@@ -1,13 +1,13 @@
 {
-  "name": "ATR 그리드 분할매매 트래커",
-  "short_name": "ATR그리드",
-  "description": "코스피200 / QQQ ATR 기반 그리드 분할매매 트래커",
+  "name": "분할매매 의사결정 보조 도구",
+  "short_name": "분할매매",
+  "description": "ATR 기반 분할매수·분할매도 의사결정 보조 도구",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f2f3f5",
-  "theme_color": "#ffffff",
+  "background_color": "#0b0f17",
+  "theme_color": "#0b0f17",
   "lang": "ko",
   "icons": [
     {
