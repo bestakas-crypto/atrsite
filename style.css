@@ -357,6 +357,25 @@ input:focus {
   font-weight: 700;
 }
 
+.stock-card-menu {
+  flex-shrink: 0;
+  min-width: 32px;
+  min-height: 32px;
+  margin: -4px -6px -4px 0;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.stock-card-menu:active {
+  background: var(--bg);
+  color: var(--text);
+}
+
 .stock-card-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -553,6 +572,17 @@ input:focus {
 
 .data-table tbody tr[data-clickable]:active {
   background: var(--bg-elevated);
+}
+
+.tx-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: -6px 0 10px;
+}
+
+.tx-edit-hint {
+  color: var(--text-faint) !important;
+  text-align: center !important;
 }
 
 .badge-buy {

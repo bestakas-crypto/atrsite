@@ -417,8 +417,7 @@
         takeProfit = computeTakeProfitPrice(stock, derived, stock.lastAtr);
       }
 
-      const card = document.createElement('button');
-      card.type = 'button';
+      const card = document.createElement('div');
       card.className = 'stock-card';
       card.dataset.id = stock.id;
 
@@ -447,6 +446,14 @@
         returnSpan.style.fontSize = '12px';
       }
       top.appendChild(returnSpan);
+
+      const menuBtn = document.createElement('button');
+      menuBtn.type = 'button';
+      menuBtn.className = 'stock-card-menu';
+      menuBtn.dataset.id = stock.id;
+      menuBtn.setAttribute('aria-label', '종목 삭제');
+      menuBtn.textContent = '⋮';
+      top.appendChild(menuBtn);
 
       card.appendChild(top);
 
@@ -656,6 +663,11 @@
       }
       tr.appendChild(tdPnl);
 
+      const tdEdit = document.createElement('td');
+      tdEdit.className = 'tx-edit-hint';
+      tdEdit.textContent = '✎';
+      tr.appendChild(tdEdit);
+
       el.txBody.appendChild(tr);
     });
 
@@ -835,6 +847,19 @@
     });
   }
 
+  // Quick delete from the list card's "⋮" menu — same effect as the settings
+  // "종목 삭제" button, but reachable without opening the stock first.
+  function handleQuickDeleteStock(stockId) {
+    const stock = getStock(stockId);
+    if (!stock) return;
+    askConfirm(`'${stock.name}' 종목을 삭제합니다. 이 작업은 되돌릴 수 없습니다.`, () => {
+      portfolio = portfolio.filter((s) => s.id !== stockId);
+      savePortfolio();
+      renderList();
+      showToast('종목이 삭제되었습니다.');
+    });
+  }
+
   // ---------- Legacy migration ----------
   function checkLegacyMigration() {
     if (localStorage.getItem(MIGRATION_SKIP_FLAG)) return;
@@ -904,6 +929,12 @@
     });
 
     el.stockList.addEventListener('click', (e) => {
+      const menuBtn = e.target.closest('.stock-card-menu');
+      if (menuBtn) {
+        e.stopPropagation();
+        handleQuickDeleteStock(menuBtn.dataset.id);
+        return;
+      }
       const card = e.target.closest('.stock-card');
       if (card) navigateToDetail(card.dataset.id);
     });
