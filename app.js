@@ -374,6 +374,7 @@
     el.fxRateRows = document.getElementById('fx-rate-rows');
     el.btnFxRefresh = document.getElementById('btn-fx-refresh');
     el.btnFxSave = document.getElementById('btn-fx-save');
+    el.btnExportData = document.getElementById('btn-export-data');
     el.stockList = document.getElementById('stock-list');
     el.stockListEmpty = document.getElementById('stock-list-empty');
     el.depositList = document.getElementById('deposit-list');
@@ -1373,6 +1374,28 @@
       saveFxRates();
       renderList();
       showToast('환율이 저장되었습니다.');
+    });
+
+    // 다른 기기(예: PC)로 데이터를 옮기기 위한 내보내기 -- localStorage는
+    // 기기/브라우저마다 독립적이라 이 파일을 옮기는 것 말고는 방법이 없다.
+    // ATRsite-pro(서버형)의 "기존 데이터 가져오기"가 그대로 읽을 수 있는
+    // 형식(stock-portfolio/cash-deposits/fx-rates)으로 내보낸다.
+    el.btnExportData.addEventListener('click', () => {
+      const payload = {
+        'stock-portfolio': JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'),
+        'cash-deposits': JSON.parse(localStorage.getItem(DEPOSIT_STORAGE_KEY) || '[]'),
+        'fx-rates': JSON.parse(localStorage.getItem(FX_STORAGE_KEY) || '{}'),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `atrsite-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast('내보내기 완료 -- 다운로드된 파일을 다른 기기로 옮기세요.');
     });
 
     el.stockList.addEventListener('click', (e) => {
