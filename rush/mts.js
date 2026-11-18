@@ -165,6 +165,7 @@ function drawPanels() {
   // 포지션 줄
   const py = b.y1 + 72, ph = 44;
   card(ox + 12, py, W - 24, ph, 14);
+  if (G.floats.length) return; // 체결·손익 알림이 이 줄을 덮는 동안
   if (G.pos) {
     const long = G.pos.dir > 0, c = long ? M.red : M.blue;
     const w = chip(`${long ? '매수' : '매도'} x${posUnits()} / 최대 ${G.cap}단`, ox + 24, py + 27, c, long ? M.redBg : M.blueBg, 'left', 12);
@@ -468,8 +469,10 @@ function drawMenu() {
   y += ah + 12;
 
   // 레버리지 선택
-  const lh = 152;
+  const lh = 196;
   card(x, y, w, lh);
+  drawDiffSeg(L, y + 12, IW);
+  y += 44;
   T('레버리지', L, y + 28, 15, 800, M.text);
   T(`스택 최대 ${stackCap(C.money)}단 · ${nextCapText(C.money)}`, x + w - 16, y + 28, 11, 600, M.sub, 'right');
   const mx = maxLev(C.money), bw = (IW - 16) / 3, bh = 46;
@@ -484,7 +487,7 @@ function drawMenu() {
     T(open ? subs[lv] : unlockRank(lv).name, bx + bw / 2, byy + 37, 11, 600, sel ? 'rgba(255,255,255,0.85)' : M.faint, 'center');
     G.buttons.push({ x: bx, y: byy, w: bw, h: bh, act: 'sel', lev: lv });
   });
-  y += lh + 12;
+  y += lh - 44 + 12;
 
   if (!tight && !showAna) {
     card(x, y, w, 62);
@@ -503,6 +506,9 @@ function drawMenu() {
   T(`최고 자산 ${kor(C.best)}원 · 한 판 최고 ${pctText(C.bestDay)}`, x + w / 2, y, 12, 600, M.sub, 'center');
   T('디자인 바꾸기 (네온)', x + w / 2, y + 26, 12, 700, M.blue, 'center');
   G.buttons.push({ x: x + w / 2 - 70, y: y + 10, w: 140, h: 24, act: 'theme' });
+  T(resetLabel(), x + w / 2, y + 52, 12, 700, resetArmed() ? M.red : M.faint, 'center');
+  G.buttons.push({ x: x + w / 2 - 90, y: y + 36, w: 180, h: 24, act: 'resetAsk' });
+  drawNudge();
 }
 
 
@@ -566,6 +572,37 @@ function drawAnalysis() {
   button(x, Math.min(y, H - 56), w, 44, CYAN, '#fff', '돌아가기', 'back');
 }
 
+// 난이도 세그먼트 (증권사 앱)
+function drawDiffSeg(x, y, w) {
+  const h = 36, half = (w - 6) / 2;
+  g.fillStyle = M.soft; roundRect(x, y, w, h, 12); g.fill();
+  ['easy', 'normal'].forEach((k, i) => {
+    const bx = x + 3 + i * half, on = P.diff === k;
+    if (on) card(bx, y + 3, half, h - 6, 10);
+    g.font = font(14, 800); const lw = g.measureText(DIFF_LABEL[k][0]).width;
+    g.font = font(11, 600); const sw = g.measureText(DIFF_LABEL[k][1]).width;
+    const sx = bx + half / 2 - (lw + 6 + sw) / 2; // 이름과 설명을 나란히 가운데 정렬
+    T(DIFF_LABEL[k][0], sx, y + 23, 14, 800, on ? M.text : M.faint);
+    T(DIFF_LABEL[k][1], sx + lw + 6, y + 22, 11, 600, on ? (k === 'easy' ? M.blue : '#d97a00') : M.faint);
+    G.buttons.push({ x: bx, y: y + 3, w: half, h: h - 6, act: 'diff', val: k });
+  });
+  return h + 10;
+}
+// 보통 도전 안내 (증권사 앱): 헤더 자리 위
+function drawNudge() {
+  if (!P.nudgePending) return;
+  const x = ox + 12, w = W - 24, y = 8, h = 74;
+  g.save(); g.shadowColor = 'rgba(0,20,60,0.18)'; g.shadowBlur = 18; g.fillStyle = '#fff7e8'; roundRect(x, y, w, h, 16); g.fill(); g.restore();
+  T('쉬움 정복! 자본금 2배 달성', x + 16, y + 24, 14, 800, '#7a4a00');
+  T('보통(실전 난이도)에 도전해 보세요.', x + 16, y + 44, 12, 600, M.sub);
+  const bw = 78, by = y + h - 32;
+  g.fillStyle = M.blue; roundRect(x + w - bw * 2 - 18, by, bw, 24, 8); g.fill();
+  T('보통으로', x + w - bw * 1.5 - 18, by + 16, 12, 800, '#fff', 'center');
+  g.strokeStyle = M.line; g.lineWidth = 1; roundRect(x + w - bw - 10, by, bw, 24, 8); g.stroke();
+  T('닫기', x + w - bw / 2 - 10, by + 16, 12, 700, M.sub, 'center');
+  G.buttons.unshift({ x: x + w - bw * 2 - 18, y: by, w: bw, h: 24, act: 'nudgeGo' }, { x: x + w - bw - 10, y: by, w: bw, h: 24, act: 'nudgeX' });
+}
+
 function drawAch() {
   const x = ox + 16, w = W - 32;
   g.fillStyle = M.bg; g.fillRect(0, 0, innerWidth, innerHeight);
@@ -607,7 +644,7 @@ function drawOver() {
   y += G.recordDay ? 36 : 16;
   // 거래 내역 요약 (3 x 2)
   const cells = [['레버리지', `${G.lev}배`], ['매매', `${G.trades}회`], ['수익', `${G.wins}회`],
-    ['최고 연속', `${G.bestCombo}회`], ['강제청산', `${G.liqs}회`], ['연속 이익', `${C.streak}판`]];
+    ['최고 콤보', `x${G.bestCombo}`], ['강제청산', `${G.liqs}회`], ['연속 이익 판', `${C.streak}판`]];
   const cw = IW / 3;
   g.fillStyle = M.soft; roundRect(L, y, IW, 76, 12); g.fill();
   cells.forEach(([a, b], i) => {

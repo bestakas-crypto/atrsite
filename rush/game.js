@@ -85,6 +85,11 @@ const WS = {
   // 복수매매 함정
   sucker: 0.25, suckerUp: 0.006, suckerUpSecs: 4, suckerDown: 0.018, suckerDownSecs: 3,
 };
+// 난이도: 휩쏘 시스템 전체에 곱하는 배율 하나 (보스·블레싱·수수료 등 나머지는 같음)
+const DIFF = { easy: 0.5, normal: 1.0 };
+const DIFF_LABEL = { easy: ['쉬움', '실전보다 쉬워요'], normal: ['보통', '실전 난이도'] };
+const DK = () => (G && G.diffK) || 1;
+
 // 습관 적응: 패턴이 쌓일수록 서서히 그 습관을 노리는 휩쏘가 강해짐
 const ADAPT = { strength: 0.8, alpha: 0.12, flipAlpha: 0.25 };
 
@@ -96,11 +101,11 @@ function winRate() {
 function wsMult(kind) {
   if (G.blessed) return 1; // 구제 라운드: 적응형 난이도 쉼
   let m = 1;
-  if (C.streak >= 3) m *= WS.streakBoost;
+  if (C.streak >= 3) m *= 1 + (WS.streakBoost - 1) * DK();
   const wr = winRate();
-  if (wr !== null) m *= wr > WS.winHi ? WS.winUp : wr < WS.winLo ? WS.winDown : 1;
+  if (wr !== null) m *= wr > WS.winHi ? 1 + (WS.winUp - 1) * DK() : wr < WS.winLo ? WS.winDown : 1;
   if (G.afterBigLoss) m *= WS.afterLossEase;
-  const h = C.hab, A = ADAPT.strength;
+  const h = C.hab, A = ADAPT.strength * DK();
   if (kind === 'retrace') m *= 1 + A * clamp01((h.chase - 0.3) / 0.4);
   if (kind === 'greed') m *= 1 + A * clamp01(h.hold / 10);
   if (kind === 'range') m *= 1 + A * clamp01((h.flip - 3) / 5); // 판당 3번 넘게 뒤집으면
@@ -121,7 +126,7 @@ function wsTrend() {
 function planRegime() {
   G.regime = C.regimeNext || 'trend';
   let p = (G.regime === 'trend' ? WS.regimeSwitch : WS.regimeBack) + WS.regimeStreak * Math.min(C.streak, 3);
-  if (G.regime === 'trend') p *= wsMult('range');
+  if (G.regime === 'trend') p *= wsMult('range') * DK(); // 횡보장 빈도
   C.regimeNext = Math.random() < Math.min(0.8, p) ? (G.regime === 'trend' ? 'range' : 'trend') : G.regime;
 }
 
@@ -136,13 +141,13 @@ function engineTick() {
     if (tk.p0 !== null && G.t >= tk.seg.until) {
       tk.done = true;
       const move = G.price / tk.p0 - 1;
-      const frac = G.blessed ? rand(BLESS.retrace[0], BLESS.retrace[1]) : G.regime === 'range' ? rand(WS.rangeRetrace[0], WS.rangeRetrace[1])
-        : Math.min(0.75, rand(WS.retrace[0], WS.retrace[1]) * wsMult('retrace'));
+      const frac = G.blessed ? rand(BLESS.retrace[0], BLESS.retrace[1]) : DK() * (G.regime === 'range' ? rand(WS.rangeRetrace[0], WS.rangeRetrace[1])
+        : Math.min(0.75, rand(WS.retrace[0], WS.retrace[1]) * wsMult('retrace')));
       wsPush(G.t + WS.retraceDelay, WS.retraceSecs, -move * frac);
     }
   }
   // (3) 레벨 사냥 윅
-  if (!G.blessed && G.t > (G.wickUntil || 0) && Math.random() < WS.wickPerSec * TICK * wsMult('wick') * (G.regime === 'range' ? 1.5 : 1)) {
+  if (!G.blessed && G.t > (G.wickUntil || 0) && Math.random() < WS.wickPerSec * DK() * TICK * wsMult('wick') * (G.regime === 'range' ? 1.5 : 1)) {
     const recent = G.hist.slice(-HIST), hi = Math.max(...recent), lo = Math.min(...recent);
     const lv = [hi, lo, Math.ceil(G.price), Math.floor(G.price), Math.ceil(G.price / 5) * 5, Math.floor(G.price / 5) * 5]
       .filter(v => { const d = Math.abs(v / G.price - 1); return d >= WS.wickMin && d <= WS.wickMax; });
@@ -159,7 +164,7 @@ function engineTick() {
     const r = unreal() / posMargin();
     if (r > 0) G.pos.profitSecs += TICK;
     G.pos.greedT = r > WS.greedPct ? G.pos.greedT + TICK : 0;
-    if (!G.blessed && G.pos.greedT > WS.greedSecs && Math.random() < WS.greedPerSec * TICK * wsMult('greed')) {
+    if (!G.blessed && G.pos.greedT > WS.greedSecs && Math.random() < WS.greedPerSec * DK() * TICK * wsMult('greed')) {
       wsPush(G.t, WS.greedRevSecs, -G.pos.dir * rand(WS.greedSize[0], WS.greedSize[1]));
       G.pos.greedT = -6; // 같은 보유에 연달아 걸리지 않게
     }
@@ -185,15 +190,15 @@ function engineOnAdd(side, isNew) {
   // 분석: 큰 손실 직후 10초 안에 최대 스택까지 쌓거나, 직전 판보다 레버리지를 올려 재진입
   if (G.afterBigLoss && G.t < 10 && ((G.cap > 1 && posUnits() >= G.cap) || G.lev > (C.lastRoundLev || G.lev))) G.revenged = true;
   if (G.boss || G.blessed || state !== 'play') return;
-  if (Math.random() < Math.min(0.85, WS.shakeChance * wsMult('shake'))) {
-    const sz = rand(WS.shakeSize[0], WS.shakeSize[1]);
+  if (Math.random() < Math.min(0.85, WS.shakeChance * DK() * wsMult('shake'))) {
+    const sz = rand(WS.shakeSize[0], WS.shakeSize[1]) * DK();
     wsPush(G.t, WS.shakeSecs, -side * sz);
     wsPush(G.t + WS.shakeSecs, WS.shakeBackSecs, side * sz);
   }
   const aggressive = G.lev >= maxLev(C.money) || posUnits() >= G.cap;
   if (G.afterBigLoss && !G.suckerRolled && G.t < 10 && aggressive) {
     G.suckerRolled = true;
-    if (Math.random() < WS.sucker) {
+    if (Math.random() < WS.sucker * DK()) {
       // 쉬워 보이는 판: 그 방향 뉴스 + 부드러운 추세, 그리고 강한 반전
       showNews(`[속보] ${freshPick(side > 0 ? NEWS_GOOD : NEWS_BAD)}`, 'news', side);
       wsPush(G.t + 0.3, WS.suckerUpSecs, side * WS.suckerUp);
@@ -210,7 +215,7 @@ function engineOnClose(pos, net, byPlayer) {
   if (net > 0) C.hab.hold = ema(C.hab.hold, pos.profitSecs || 0, ADAPT.alpha);
   if (net > 0) { G.holdW += pos.holdSecs || 0; G.nW += 1; } else { G.holdL += pos.holdSecs || 0; G.nL += 1; }
   G.stackSum += pos.maxUnits || 1; G.stackN += 1;
-  if (byPlayer && !G.boss && !G.blessed && state === 'play' && !G.ending && G.t < ROUND - 3 && Math.random() < WS.exitReverse) {
+  if (byPlayer && !G.boss && !G.blessed && state === 'play' && !G.ending && G.t < ROUND - 3 && Math.random() < WS.exitReverse * DK()) {
     wsPush(G.t + 0.2, WS.exitRevSecs, -pos.dir * rand(WS.exitRevSize[0], WS.exitRevSize[1]));
   }
 }
@@ -238,7 +243,8 @@ function planBless() {
 const PROF_KEY = 'futures-profile-v1';
 const ANA_WINDOW = 20;   // 성향은 최근 20판 기준
 let P = { rounds: 0, wins: 0, sumWinR: 0, sumLossR: 0, fees: 0, slip: 0, peak: 1, liqs: 0, mcs: 0, kills: 0,
-  maxWS: 0, maxLS: 0, ws: 0, ls: 0, recent: [], arch: null, prevArch: null };
+  maxWS: 0, maxLS: 0, ws: 0, ls: 0, recent: [], arch: null, prevArch: null,
+  diff: 'easy', playedNormal: false, nudgeSeen: false, nudgePending: false };
 try { const s = JSON.parse(localStorage.getItem(PROF_KEY)); if (s && typeof s.rounds === 'number') P = Object.assign(P, s); } catch (e) { /* 저장 불가 */ }
 function saveProfile() { try { localStorage.setItem(PROF_KEY, JSON.stringify(P)); } catch (e) { /* 무시 */ } }
 
@@ -809,7 +815,7 @@ const sfx = {
 // ---------- 한 판 ----------
 function newRound(lev) {
   G = {
-    lev, cap: stackCap(C.money), ctl: [], rate: C.rate || RATE.start, rateVel: 0, rateHist: [], fees: 0, slip: 0, bossSlain: false, ws: [], regime: 'trend', track: null, wickUntil: 0, flips: 0, lastDir: 0, entries: 0, late2: 0, stackSum: 0, stackN: 0, holdW: 0, nW: 0, holdL: 0, nL: 0, revenged: false, blessed: false, blessDir: 0, stW: 0, stL: 0, sumW: 0, sumL: 0, afterBigLoss: false, suckerRolled: false, t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
+    lev, cap: stackCap(C.money), ctl: [], diffK: DIFF[P.diff] || 1, diffName: P.diff, rate: C.rate || RATE.start, rateVel: 0, rateHist: [], fees: 0, slip: 0, bossSlain: false, ws: [], regime: 'trend', track: null, wickUntil: 0, flips: 0, lastDir: 0, entries: 0, late2: 0, stackSum: 0, stackN: 0, holdW: 0, nW: 0, holdL: 0, nL: 0, revenged: false, blessed: false, blessDir: 0, stW: 0, stL: 0, sumW: 0, sumL: 0, afterBigLoss: false, suckerRolled: false, t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
     money: C.money, startMoney: C.money, pos: null, combo: 0, bestCombo: 0, trades: 0, wins: 0, liqs: 0,
     haltUntil: 0, cbDone: false, broke: false,
     news: null, flash: null, shake: 0, parts: [], floats: [], crack: null, pulse: 0, lastSec: ROUND + 1,
@@ -1220,6 +1226,7 @@ function startRound(lev) {
   planRegime();
   G.afterBigLoss = C.bigLossRound === C.rounds; // 직전 판이 큰 손실
   planBless();
+  if (P.diff === 'normal') { P.playedNormal = true; P.nudgePending = false; saveProfile(); }
 }
 
 // 이번 판에 보스가 나올지 정함 (나온다면 노릴 시각만 정하고, 실제 발동은 포지션이 있을 때)
@@ -1383,6 +1390,7 @@ function finishRound() {
   checkRank();
   saveCareer();
   recordRound(false);
+  if (G.diffName === 'easy' && !P.playedNormal && !P.nudgeSeen && C.money >= 2 * START_MONEY) { P.nudgeSeen = true; P.nudgePending = true; saveProfile(); }
 }
 
 function checkRank() {
@@ -1401,6 +1409,56 @@ function checkRank() {
       r: rand(0, 6), vr: rand(-12, 12), c: pick(cols), s: rand(5, 10) });
   }
   [0, 4, 7, 12, 7, 12, 16, 19].forEach((s, i) => tone(523 * Math.pow(2, s / 12), 0.18, 'triangle', 0.07, null, 0.3 + i * 0.09));
+}
+
+// 난이도 세그먼트 (네온): 쉬움 | 보통
+function drawDiffSeg(x, y, w) {
+  const h = 36, half = (w - 6) / 2;
+  g.fillStyle = 'rgba(10,12,32,0.7)'; roundRect(x, y, w, h, 12); g.fill();
+  ['easy', 'normal'].forEach((k, i) => {
+    const bx = x + 3 + i * (half), on = P.diff === k, c = k === 'easy' ? CYAN : ORANGE;
+    if (on) { g.save(); g.fillStyle = c + '33'; g.shadowColor = c; g.shadowBlur = 12; roundRect(bx, y + 3, half, h - 6, 10); g.fill(); g.restore();
+      g.strokeStyle = c; g.lineWidth = 1.5; roundRect(bx, y + 3, half, h - 6, 10); g.stroke(); }
+    g.font = font(14, 900); const lw = g.measureText(DIFF_LABEL[k][0]).width;
+    g.font = font(11, 700); const sw = g.measureText(DIFF_LABEL[k][1]).width;
+    const sx = bx + half / 2 - (lw + 6 + sw) / 2; // 이름과 설명을 나란히 가운데 정렬
+    g.textAlign = 'left';
+    g.fillStyle = on ? '#fff' : 'rgba(255,255,255,0.45)'; g.font = font(14, 900);
+    g.fillText(DIFF_LABEL[k][0], sx, y + 23);
+    g.fillStyle = on ? c : 'rgba(255,255,255,0.35)'; g.font = font(11, 700);
+    g.fillText(DIFF_LABEL[k][1], sx + lw + 6, y + 22);
+    G.buttons.push({ x: bx, y: y + 3, w: half, h: h - 6, act: 'diff', val: k });
+  });
+  return h + 10;
+}
+// 보통 도전 안내 (한 번만, 닫으면 끝) — 네온: 로고 자리 위에 띄움
+function drawNudge() {
+  if (!P.nudgePending) return;
+  const x = ox + 12, w = W - 24, y = 10, h = 74;
+  glass(x, y, w, h, 16, 0.95, ORANGE);
+  g.textAlign = 'left'; g.fillStyle = GOLD; g.font = font(14, 900);
+  g.fillText('쉬움 정복! 자본금 2배 달성', x + 14, y + 24);
+  g.fillStyle = 'rgba(255,255,255,0.8)'; g.font = font(12, 600);
+  g.fillText('보통(실전 난이도)에 도전해 보세요.', x + 14, y + 44);
+  const bw = 78, by = y + h - 32;
+  g.fillStyle = ORANGE; roundRect(x + w - bw * 2 - 18, by, bw, 24, 8); g.fill();
+  g.fillStyle = '#1a0d00'; g.textAlign = 'center'; g.font = font(12, 800);
+  g.fillText('보통으로', x + w - bw * 1.5 - 18, by + 16);
+  g.strokeStyle = 'rgba(255,255,255,0.3)'; g.lineWidth = 1; roundRect(x + w - bw - 10, by, bw, 24, 8); g.stroke();
+  g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillText('닫기', x + w - bw / 2 - 10, by + 16);
+  // 안내 버튼이 다른 버튼보다 먼저 눌리게 앞에 넣음
+  G.buttons.unshift({ x: x + w - bw * 2 - 18, y: by, w: bw, h: 24, act: 'nudgeGo' }, { x: x + w - bw - 10, y: by, w: bw, h: 24, act: 'nudgeX' });
+}
+function setDiff(k) { P.diff = k; saveProfile(); tone(k === 'easy' ? 660 : 880, 0.06, 'sine', 0.04); }
+
+// 로비의 자본금 리셋: 한 번 누르면 3초 동안 확인 상태, 그 안에 한 번 더 누르면 리셋
+let resetArmAt = -1e9;
+function resetArmed() { return performance.now() - resetArmAt < 3000; }
+function resetLabel() { return resetArmed() ? '정말 리셋할까요? 한 번 더 누르면 100만 원부터' : '자본금 리셋 (전적·업적은 유지)'; }
+function resetAsk() {
+  if (resetArmed()) { resetArmAt = -1e9; restartCareer(); tone(330, 0.2, 'triangle', 0.06); return; }
+  resetArmAt = performance.now();
+  tone(500, 0.08, 'square', 0.04);
 }
 
 // 게임 오버 뒤 처음부터: 최고 기록·업적은 남긴다
@@ -2090,11 +2148,13 @@ function drawMenu() {
     y += 52;
   }
 
+  G.buttons = [];
+  y += drawDiffSeg(x, y - 18, w) - 4;
+  g.textAlign = 'center';
   g.fillStyle = 'rgba(255,255,255,0.8)';
   g.font = font(14, 700);
   g.fillText(`레버리지를 골라 시작 · 스택 최대 ${stackCap(C.money)}단`, cx, y);
   y += 12;
-  G.buttons = [];
   const mx = maxLev(C.money), bw = (w - 20) / 3, bh = 54;
   const subs = { 1: '안전', 5: '보통', 10: '화끈', 20: '위험', 50: '광기', 100: '전설' };
   const cols = { 1: CYAN, 5: GOLD, 10: ALERT, 20: GREEN, 50: ORANGE, 100: RUMOR };
@@ -2133,6 +2193,11 @@ function drawMenu() {
   g.font = font(12, 700);
   g.fillText('디자인 바꾸기 (증권사 앱)', cx, y + 26);
   G.buttons.push({ x: cx - 80, y: y + 10, w: 160, h: 24, act: 'theme' });
+  g.fillStyle = resetArmed() ? ALERT : 'rgba(255,255,255,0.4)';
+  g.font = font(12, 700);
+  g.fillText(resetLabel(), cx, y + 52);
+  G.buttons.push({ x: cx - 90, y: y + 36, w: 180, h: 24, act: 'resetAsk' });
+  drawNudge();
 }
 
 function drawAch() {
@@ -2310,10 +2375,12 @@ function drawRateBar() {
 // 결과 통계 한 줄: 승률·평균 수익·평균 손실·시장 (차트와 통계가 선생님)
 function statLine() {
   const n = G.stW + G.stL, R = C.stats, rn = R.w + R.l;
-  const wr = n ? Math.round(G.stW / n * 100) + '%' : '-';
-  const aw = G.stW ? sign(G.sumW / G.stW) : '-', al = G.stL ? sign(G.sumL / G.stL) : '-';
-  const runWr = rn ? ` · 누적 ${Math.round(R.w / rn * 100)}%` : '';
-  return `승률 ${wr}${runWr} · 평균 ${aw} / ${al} · ${G.regime === 'range' ? '횡보장' : '추세장'}`;
+  const parts = [n ? `승률 ${Math.round(G.stW / n * 100)}% (${G.stW}/${n})` : '매매 없음'];
+  if (G.stW) parts.push(`평균 수익 ${sign(G.sumW / G.stW)}`);
+  if (G.stL) parts.push(`평균 손실 ${sign(G.sumL / G.stL)}`);
+  parts.push(G.regime === 'range' ? '횡보장' : '추세장');
+  if (rn) parts.push(`누적 승률 ${Math.round(R.w / rn * 100)}%`);
+  return parts.join(' · ');
 }
 
 function drawCelebrate() {
@@ -2466,6 +2533,10 @@ function tapAt(x, y) {
     if (b && b.act === 'lev') startRound(b.lev);
     if (b && b.act === 'ach') state = 'ach';
     if (b && b.act === 'ana') state = 'analysis';
+    if (b && b.act === 'resetAsk') resetAsk();
+    if (b && b.act === 'diff') setDiff(b.val);
+    if (b && b.act === 'nudgeGo') { P.nudgePending = false; setDiff('normal'); }
+    if (b && b.act === 'nudgeX') { P.nudgePending = false; saveProfile(); }
     if (b && b.act === 'theme') { // 디자인 전환: 증권사 앱 ↔ 네온
       try { localStorage.setItem('futures-theme', localStorage.getItem('futures-theme') === 'neon' ? 'mts' : 'neon'); } catch (e) { /* 무시 */ }
       location.reload();
