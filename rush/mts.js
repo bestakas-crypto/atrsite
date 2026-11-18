@@ -106,6 +106,7 @@ function draw() {
   }
   if (state === 'menu') drawMenu();
   if (state === 'ach') drawAch();
+  if (state === 'analysis') drawAnalysis();
   if (state === 'over') { drawOver(); drawRankUp(); }
   if (state === 'margin') drawMarginCall();
 }
@@ -177,7 +178,7 @@ function drawPanels() {
 function drawGrid() {}
 
 function drawChart() {
-  if (state === 'menu' || state === 'ach') return;
+  if (state === 'menu' || state === 'ach' || state === 'analysis') return;
   const b = chartBox(), [lo, hi] = range(), n = G.hist.length;
   const X = i => b.x0 + i / (HIST - 1) * (b.x1 - b.x0);
   const col = '#2f3a4d'; // 차트선은 한 색 고정, 빨강·파랑은 손익에만
@@ -455,7 +456,8 @@ function drawMenu() {
 
   // 내 자산 카드
   let y = 66;
-  const ch = tight ? 76 : 104, ah = 150 + ch;
+  const showAna = P.rounds >= 3;
+  const ch = tight || showAna ? 76 : 104, ah = 150 + ch;
   card(x, y, w, ah);
   T('내 자산', L, y + 28, 14, 700, M.sub);
   const prof = C.money - START_MONEY, pc = prof >= 0 ? M.red : M.blue;
@@ -484,7 +486,7 @@ function drawMenu() {
   });
   y += lh + 12;
 
-  if (!tight) {
+  if (!tight && !showAna) {
     card(x, y, w, 62);
     T('[속보]·[긴급]은 따라가고, [소문]은 거꾸로', L, y + 26, 13, 700, M.text);
     T('왼쪽 탭 매수(롱) · 오른쪽 탭 매도(숏)', L, y + 46, 12, 600, M.sub);
@@ -496,10 +498,72 @@ function drawMenu() {
   g.fillStyle = M.blue; roundRect(x, y, w, 56, 16); g.fill();
   T(`${lv}배로 60초 거래 시작`, x + w / 2, y + 35, 17, 800, '#fff', 'center');
   G.buttons.push({ x, y, w, h: 56, act: 'lev', lev: lv });
-  y += 76;
+  y += 66;
+  if (showAna) y += drawAnaCard(x, y, w) + 24; else y += 10;
   T(`최고 자산 ${kor(C.best)}원 · 한 판 최고 ${pctText(C.bestDay)}`, x + w / 2, y, 12, 600, M.sub, 'center');
   T('디자인 바꾸기 (네온)', x + w / 2, y + 26, 12, 700, M.blue, 'center');
   G.buttons.push({ x: x + w / 2 - 70, y: y + 10, w: 140, h: 24, act: 'theme' });
+}
+
+
+// 로비 요약 카드 (증권사 앱)
+function drawAnaCard(x, y, w) {
+  const h = 92, a = analyze();
+  card(x, y, w, h);
+  T('트레이더 분석 ›', x + 16, y + 24, 13, 800, M.sub);
+  const at = archText();
+  g.font = font(13, 800);
+  chip(at, x + w - 14, y + 25, '#7a5400', M.goldBg, 'right', 13);
+  T(allTimeLine(), x + 16, y + 46, 12, 600, M.sub);
+  g.font = font(13, 700);
+  wrapLines(diagnose(a), w - 32).slice(0, 2).forEach((t, i) => T(t, x + 16, y + 68 + i * 17, 13, 700, M.text));
+  G.buttons.push({ x, y, w, h, act: 'ana' });
+  return h;
+}
+// 상세 분석 화면 (증권사 앱)
+function drawAnalysis() {
+  const x = ox + 16, w = W - 32, a = analyze(), rh = H < 720 ? 24 : 29;
+  g.fillStyle = M.bg; g.fillRect(0, 0, innerWidth, innerHeight);
+  T('트레이더 분석', x + 4, 40, 22, 800, M.text);
+  T(a ? `성향: 최근 ${a.n}판 · 전적: 누적` : '전적: 누적', x + w - 4, 40, 12, 600, M.sub, 'right');
+  let y = 54;
+  card(x, y, w, 76);
+  T(archText(), ox + W / 2, y + 36, 24, 800, M.gold, 'center');
+  T(P.arch ? ARCH[P.arch].s : '3판부터 성향이 나와요', ox + W / 2, y + 58, 12, 600, M.sub, 'center');
+  y += 86;
+  g.font = font(13, 700);
+  const dl = wrapLines(diagnose(a), w - 32).slice(0, 2);
+  card(x, y, w, 22 + dl.length * 18, 14, '#fff7e8');
+  dl.forEach((t, i) => T(t, x + 16, y + 26 + i * 18, 13, 700, '#7a4a00'));
+  y += 32 + dl.length * 18;
+  T('성향', x + 4, y + 4, 12, 800, M.sub);
+  y += 10;
+  const axes = a ? a.axes : [];
+  card(x, y, w, Math.max(1, axes.length) * rh + 8);
+  if (!axes.length) T('아직 데이터가 부족해요', x + 16, y + 22, 12, 600, M.faint);
+  axes.forEach((ax, i) => {
+    const yy = y + 4 + i * rh;
+    T(ax.name, x + 16, yy + 18, 13, 700, M.text);
+    for (let k = 0; k < 3; k++) {
+      g.fillStyle = k <= ax.lv ? [M.blue, '#f5b800', M.red][ax.lv] : M.soft;
+      roundRect(x + 88 + k * 24, yy + 9, 20, 9, 4); g.fill();
+    }
+    T(LV_NAME[ax.lv], x + 166, yy + 18, 11, 700, M.sub);
+    T(ax.val, x + w - 14, yy + 18, 11, 600, M.sub, 'right');
+  });
+  y += Math.max(1, axes.length) * rh + 18;
+  T('전적', x + 4, y + 4, 12, 800, M.sub);
+  y += 10;
+  const items = statItems(), cw = (w - 10) / 2;
+  items.forEach(([k, v], i) => {
+    const bx = x + (i % 2) * (cw + 10), by = y + Math.floor(i / 2) * rh;
+    g.fillStyle = M.card; roundRect(bx, by + 2, cw, rh - 4, 8); g.fill();
+    T(k, bx + 10, by + rh / 2 + 4, 11, 600, M.sub);
+    T(v, bx + cw - 10, by + rh / 2 + 5, 13, 800, M.text, 'right');
+  });
+  y += Math.ceil(items.length / 2) * rh + 8;
+  G.buttons = [];
+  button(x, Math.min(y, H - 56), w, 44, CYAN, '#fff', '돌아가기', 'back');
 }
 
 function drawAch() {
