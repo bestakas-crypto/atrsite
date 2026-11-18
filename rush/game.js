@@ -85,10 +85,15 @@ const WS = {
   // 복수매매 함정
   sucker: 0.25, suckerUp: 0.006, suckerUpSecs: 4, suckerDown: 0.018, suckerDownSecs: 3,
 };
-// 난이도: 휩쏘 시스템 전체에 곱하는 배율 하나 (보스·블레싱·수수료 등 나머지는 같음)
-const DIFF = { easy: 0.5, normal: 1.0 };
+// 난이도: 플레이어가 체감하는 변동성에만 곱하는 배율 (보스·블레싱·수수료·규칙은 같음)
+//  ws    = 휩쏘 6종 + 적응 엔진 강도 (되돌림 비율·흔들기 깊이·윅/탐욕 빈도·연승 역풍·횡보장 빈도)
+//  noise = 뉴스 없는 구간의 기본 가격 노이즈
+//  boss  = 보스 위력(즉시 충격 폭·지속 드리프트) — 등장 확률·쿨다운은 같음
+const DIFF = { easy: { ws: 0.3, noise: 0.7, boss: 0.6 }, normal: { ws: 1.0, noise: 1.0, boss: 1.0 } };
 const DIFF_LABEL = { easy: ['쉬움', '실전보다 쉬워요'], normal: ['보통', '실전 난이도'] };
-const DK = () => (G && G.diffK) || 1;
+const DK = () => (G && G.diffK) || 1;          // 휩쏘 배율
+const DN = () => (G && G.noiseK) || 1;         // 노이즈 배율
+const DB = () => (G && G.bossK) || 1;          // 보스 위력 배율
 
 // 습관 적응: 패턴이 쌓일수록 서서히 그 습관을 노리는 휩쏘가 강해짐
 const ADAPT = { strength: 0.8, alpha: 0.12, flipAlpha: 0.25 };
@@ -815,7 +820,7 @@ const sfx = {
 // ---------- 한 판 ----------
 function newRound(lev) {
   G = {
-    lev, cap: stackCap(C.money), ctl: [], diffK: DIFF[P.diff] || 1, diffName: P.diff, rate: C.rate || RATE.start, rateVel: 0, rateHist: [], fees: 0, slip: 0, bossSlain: false, ws: [], regime: 'trend', track: null, wickUntil: 0, flips: 0, lastDir: 0, entries: 0, late2: 0, stackSum: 0, stackN: 0, holdW: 0, nW: 0, holdL: 0, nL: 0, revenged: false, blessed: false, blessDir: 0, stW: 0, stL: 0, sumW: 0, sumL: 0, afterBigLoss: false, suckerRolled: false, t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
+    lev, cap: stackCap(C.money), ctl: [], diffK: (DIFF[P.diff] || DIFF.normal).ws, noiseK: (DIFF[P.diff] || DIFF.normal).noise, bossK: (DIFF[P.diff] || DIFF.normal).boss, diffName: P.diff, rate: C.rate || RATE.start, rateVel: 0, rateHist: [], fees: 0, slip: 0, bossSlain: false, ws: [], regime: 'trend', track: null, wickUntil: 0, flips: 0, lastDir: 0, entries: 0, late2: 0, stackSum: 0, stackN: 0, holdW: 0, nW: 0, holdL: 0, nL: 0, revenged: false, blessed: false, blessDir: 0, stW: 0, stL: 0, sumW: 0, sumL: 0, afterBigLoss: false, suckerRolled: false, t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
     money: C.money, startMoney: C.money, pos: null, combo: 0, bestCombo: 0, trades: 0, wins: 0, liqs: 0,
     haltUntil: 0, cbDone: false, broke: false,
     news: null, flash: null, shake: 0, parts: [], floats: [], crack: null, pulse: 0, lastSec: ROUND + 1,
@@ -834,8 +839,8 @@ function halted() { return G.t < G.haltUntil; }
 function simTick() {
   const seg = G.segs.find(s => G.t >= s.from && G.t < s.until);
   let trend = seg ? seg.trend : G.trend;
-  if (G.boss && !seg) trend = G.boss.dir * BOSS.drift + G.trend * 0.3; // 지속 출혈
-  const vol = 0.0003 + 0.0001 * Math.min(1, G.t / ROUND);
+  if (G.boss && !seg) trend = G.boss.dir * BOSS.drift * DB() + G.trend * 0.3; // 지속 출혈
+  const vol = (0.0003 + 0.0001 * Math.min(1, G.t / ROUND)) * DN();
   const pull = G.boss ? 0 : -0.0015 * (G.regime === 'range' ? WS.rangePull : 1) * (G.price / OPEN - 1); // 시가에서 멀어질수록 되돌아오는 힘 (보스 중엔 없음)
   rateTick();
   const bias = (G.boss ? 0 : -rateTrend() * RATE.bias) + (G.blessed && G.pos && G.blessDir ? G.blessDir * BLESS.drift : 0); // 금리 상승 추세 → 아래로, 하락 추세 → 위로
@@ -843,7 +848,7 @@ function simTick() {
   G.hist.push(G.price);
   if (G.hist.length > HIST) G.hist.shift();
   G.trend *= 0.97;
-  if (G.t >= G.nextShift) { G.trend = randn() * 0.00015; G.nextShift = G.t + rand(2, 4); }
+  if (G.t >= G.nextShift) { G.trend = randn() * 0.00015 * DN(); G.nextShift = G.t + rand(2, 4); }
   if (!G.boss && G.t >= G.nextNews && G.t < ROUND - 4) { fireNews(); G.nextNews = G.t + rand(6, 9); }
   const f = G.followUps.find(x => G.t >= x.at);
   if (f) { G.followUps = G.followUps.filter(x => x !== f); showNews(f.text, f.kind); }
@@ -1259,7 +1264,7 @@ function checkBossSlain() {
 function fireBoss() {
   const dir = -G.pos.dir; // 항상 보유 포지션의 반대
   const text = pick(dir < 0 ? BOSS_CRASH : BOSS_SURGE);
-  const size = BOSS.shock, ticks = BOSS.shockSecs / TICK;
+  const size = BOSS.shock * DB(), ticks = BOSS.shockSecs / TICK;
   G.boss = { dir, at: G.t };
   C.bossLast = C.rounds + 1;
   G.followUps = [];
