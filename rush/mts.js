@@ -527,7 +527,7 @@ function drawOver() {
   const profit = G.money - G.startMoney, rate = profit / G.startMoney, pc = profit >= 0 ? M.red : M.blue;
   const showDouble = profit > 0 && !G.doubled && !G.broke;
   const ch = H < 720 ? 70 : 100;
-  const sh = 282 + ch + (G.newAch.length ? 30 : 0) + (G.broke ? 92 : (showDouble ? 56 : 0) + 112);
+  const sh = 300 + ch + (G.newAch.length ? 30 : 0) + (G.broke ? 92 : (showDouble ? 56 : 0) + 112);
   const y0 = Math.max(10, H - sh - 8);
   g.fillStyle = 'rgba(0,10,30,0.45)'; g.fillRect(0, 0, innerWidth, innerHeight);
   card(x, y0, w, sh, 22);
@@ -554,6 +554,9 @@ function drawOver() {
   y += 88;
   T(`이번 판 수수료 ${won(G.fees)}원 · 슬리피지 ${won(G.slip)}원${G.bossSlain ? ' · ☠ 보스 처치' : ''}`, L, y - 2, 12, 700, '#d97a00');
   y += 14;
+  g.font = font(11, 600);
+  { const t = statLine(); let fs = 12; while (fs > 9 && (g.font = font(fs, 600), g.measureText(t).width > IW)) fs--; T(t, L, y + 2, fs, 600, M.sub); }
+  y += 18;
   drawRankCard(L, y, IW, G.money);
   y += 64;
   drawCurve(L, y, IW, ch, C.curve);
