@@ -329,18 +329,34 @@ function statItems() {
     ['ロスカット', `${P.liqs}回`], ['追証', `${P.mcs}回`], ['ボス撃破', `${P.kills}回`]];
 }
 // 줄바꿈 (현재 g.font 기준)
+const JP_NOHEAD = '、。，．！？」』）%・ー';
+function canBreak(a, b) {
+  if (JP_NOHEAD.includes(b)) return false;                   // 문장부호·장음은 줄 머리에 오지 않게
+  if (a === ' ' || '、。，．！？」』）'.includes(a)) return true; // 문장부호 뒤
+  const hira = ch => ch >= '\u3041' && ch <= '\u309f';
+  return hira(a) && !hira(b);                                // 조사·어미(히라가나) 뒤 → 다음 낱말
+}
 function wrapLines(text, maxW) {
-  const lines = [];
+  // 끊을 수 있는 자리로 토막 낸 뒤 줄에 채움 (예: '…から|入りましょう。')
+  const chars = [...text], tokens = [];
   let cur = '';
-  for (const ch of text) {
-    const t = cur + ch;
-    if (cur && g.measureText(t).width > maxW) {
-      if ('、。，．！？」』）%'.includes(ch)) { cur = t; continue; } // 문장부호는 줄 머리에 오지 않게 앞 줄에 붙임
-      lines.push(cur.trimEnd());
-      cur = ch === ' ' ? '' : ch;
-    } else cur = t;
+  chars.forEach((ch, i) => { cur += ch; if (i === chars.length - 1 || canBreak(ch, chars[i + 1])) { tokens.push(cur); cur = ''; } });
+  const lines = [];
+  let line = '';
+  for (const tk of tokens) {
+    if (!line) line = tk.trimStart();
+    else if (g.measureText(line + tk).width <= maxW) line += tk;
+    else { lines.push(line.trimEnd()); line = tk.trimStart(); }
+    // 토막 하나가 한 줄보다 길면 글자 단위로 자름
+    while (line.length > 1 && g.measureText(line).width > maxW) {
+      let k = line.length;
+      while (k > 1 && g.measureText(line.slice(0, k)).width > maxW) k--;
+      while (k < line.length && JP_NOHEAD.includes(line[k])) k++;
+      lines.push(line.slice(0, k));
+      line = line.slice(k);
+    }
   }
-  if (cur) lines.push(cur);
+  if (line) lines.push(line);
   return lines;
 }
 // 정해진 줄 수 안에 들어가도록 글자 크기를 줄여 가며 줄바꿈
@@ -635,6 +651,7 @@ function glass(x, y, w, h, r = 16, a = 0.5, edge = CYAN) {
 // 흐르는 티커 띠 (가상 종목)
 const TICKERS = TICKER_DATA.map(([n, p, d]) => ({ n, p, d, c: rand(-0.8, 0.8) })); // 참고 레이트는 content.js
 let tickerX = 0, tickerNext = 0;
+const TICKER_PAD = 12; // 첫 종목이 왼쪽 끝에 붙어 잘려 보이지 않게
 function drawTicker() {
   const y = H - 22, now = performance.now() / 1000;
   const live = state !== 'play';
@@ -658,7 +675,7 @@ function drawTicker() {
     return { a, bb, wa, wb, c: it.c };
   });
   tickerX %= total;
-  for (let base = tickerX; base < innerWidth; base += total) {
+  for (let base = (live ? tickerX : 0) + TICKER_PAD; base < innerWidth; base += total) { // 판 중(정지)엔 첫 종목부터
     let x = base;
     for (const q of parts) {
       g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillText(q.a, x, y + 15);
@@ -1089,16 +1106,16 @@ function floatText(text, x, y, color, size) {
   G.floats.push({ text, x, y, color, size, life: 1.2 });
 }
 // 손익·진입 문구 자리: 차트 가운데 (가격 꼬리표와 떨어진 곳)
-function zoneTop() { return chartBox().y1 + 56; }
-function rateBarY() { return chartBox().y1 + 24; } // 차트 시간 눈금 바로 아래
+function zoneTop() { return chartBox().y1 + 96; }
+function rateBarY() { return chartBox().y1 + 70; } // 뉴스 칸 바로 아래
 function celebBox() { return { y: 4, h: 70 }; } // 차트·뉴스·버튼을 피해 자산 숫자 자리 위에
 function msgPoint() {
-  return { x: ox + W / 2, y: rateBarY() + 16 }; // 금리 바 자리 위 (잠깐 덮음)
+  return { x: ox + W / 2, y: rateBarY() + 21 }; // 금리 바 자리 위 (뉴스·시간축은 안 가림)
 }
 
 // ---------- 화면 배치 ----------
 function chartBox() {
-  return { x0: ox + 16, x1: ox + W - 92, y0: 140, y1: Math.max(300, H - 186) }; // 화면 세로의 절반 이상
+  return { x0: ox + 16, x1: ox + W - 92, y0: 92, y1: Math.max(260, H - 218) }; // 화면 세로의 절반 이상
 }
 function range() {
   const vis = visCandles();
@@ -1737,7 +1754,8 @@ function fitFont(text, maxW, big, small, weight) {
   return fs;
 }
 
-const NEWS_H = 44, NEWS_Y = 102; // 뉴스 칸: 늘 같은 자리 (가운데 높이)
+const NEWS_H = 44;
+const newsCY = () => chartBox().y1 + 44; // 뉴스 칸: 차트 바로 아래 (가운데 높이) // 뉴스 칸: 늘 같은 자리 (가운데 높이)
 // 버튼 글자: 보유 방향이면 '추가', 반대면 '1단위 해제'
 function zoneText(side) {
   const n = posUnits(), nm = sideName(side);
@@ -1747,9 +1765,11 @@ function zoneText(side) {
 }
 
 function drawNews() {
-  const x = ox + 16, w = W - 32, h = NEWS_H, cy = NEWS_Y;
-  if (G.news && G.news.kind === 'boss') { drawBossBanner(ox + W / 2, cy, W - 24); return; }
-  if (!G.news) {
+  const x = ox + 16, w = W - 32, h = NEWS_H, cy = newsCY();
+  const boss = G.news && G.news.kind === 'boss';
+  // 보스는 예외: 차트 상단을 덮는 빨간 배너 (아래 뉴스 칸은 비워 둠)
+  if (boss) drawBossBanner(ox + W / 2, chartBox().y0 + BOSS_H / 2 - 6, W - 24);
+  if (!G.news || boss) {
     if (state !== 'play') return;
     // 뉴스가 없을 때도 자리 표시
     g.save();
@@ -1757,7 +1777,7 @@ function drawNews() {
     g.strokeStyle = 'rgba(255,255,255,0.16)'; g.lineWidth = 1.5; g.setLineDash([5, 6]);
     roundRect(x, cy - h / 2, w, h, 14); g.stroke(); g.setLineDash([]);
     g.fillStyle = 'rgba(255,255,255,0.32)'; g.font = font(15, 700); g.textAlign = 'center';
-    g.fillText('ニュース待機中…', ox + W / 2, cy + 5);
+    g.fillText(boss ? 'ボス発動中' : 'ニュース待機中…', ox + W / 2, cy + 5);
     g.restore();
     return;
   }
@@ -1834,7 +1854,7 @@ function drawDanger() {
   const left = Math.abs(G.price / liqPrice() - 1) * 100;
   const text = crit ? `⚠ ロスカット寸前！あと${left.toFixed(1)}%` : `ロスカット注意・あと${left.toFixed(1)}%`;
   const c = crit ? ALERT : ORANGE;
-  const b = chartBox(), cx = (b.x0 + b.x1) / 2, y = b.y0 + 18;
+  const b = chartBox(), cx = (b.x0 + b.x1) / 2, y = b.y0 + (G.boss ? 70 : 18);
   g.font = font(14, 800);
   const w = g.measureText(text).width + 32;
   g.save();

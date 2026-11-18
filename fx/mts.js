@@ -53,14 +53,14 @@ function drawCtl() {
 }
 // 금리 바: 얇은 흰 띠
 function drawRateBar() {
-  const y = rateBarY(), x = ox + 12, w = W - 24, h = 24, L = rateLabels();
-  card(x, y, w, h, 12);
+  const y = rateBarY(), x = ox + 12, w = W - 24, h = 22, L = rateLabels();
+  card(x, y, w, h, 11);
   g.font = font(12, 700);
-  T(L.rate, x + 14, y + 16, 12, 700, M.text);
+  T(L.rate, x + 14, y + 15, 12, 700, M.text);
   const rw = g.measureText(L.rate).width;
-  T(L.trend, x + 24 + rw, y + 16, 12, 800, L.tr ? '#d97a00' : '#c9a36a');
+  T(L.trend, x + 24 + rw, y + 15, 12, 800, L.tr ? '#d97a00' : '#c9a36a');
   const fav = RATE_CFG.biasSign * L.tr;
-  T(L.flow, x + w - 14, y + 16, 12, 800, fav > 0 ? M.red : fav < 0 ? M.blue : M.faint, 'right');
+  T(L.flow, x + w - 14, y + 15, 12, 800, fav > 0 ? M.red : fav < 0 ? M.blue : M.faint, 'right');
 }
 function celebBox() { return { y: 60, h: 54 }; } // 잔고 카드 자리 위에 (차트·뉴스·버튼은 안 가림)
 // 하단 티커 (밝은 띠, 네온과 같은 규칙: 플레이 중엔 멈춤)
@@ -84,7 +84,7 @@ function drawTicker() {
     return { a, bb, wa, wb, c: it.c };
   });
   tickerX %= total;
-  for (let base = tickerX; base < innerWidth; base += total) {
+  for (let base = (live ? tickerX : 0) + TICKER_PAD; base < innerWidth; base += total) { // 판 중(정지)엔 첫 종목부터
     let x = base;
     for (const q of parts) {
       g.fillStyle = M.sub; g.fillText(q.a, x, y + 15);
@@ -106,13 +106,14 @@ function drawConfetti() {
 }
 
 // ---------- 배치 ----------
-const CT = 164; // 차트 카드 위쪽 (헤더 0~56, 잔고 60~112, 뉴스 118~158)
+const CT = 118; // 차트 카드 위쪽 (헤더 0~56, 잔고 60~112). 차트 아래: 뉴스 → 금리 바 → 버튼 → 티커
 function chartBox() {
-  return { x0: ox + 24, x1: ox + W - 86, y0: CT + 24, y1: Math.max(CT + 184, H - 182) }; // 화면 세로의 절반 이상
+  return { x0: ox + 24, x1: ox + W - 86, y0: CT + 24, y1: Math.max(CT + 184, H - 224) }; // 화면 세로의 절반 이상
 }
-function rateBarY() { return chartBox().y1 + 28; }          // 차트 카드 바로 아래 얇은 띠
-function zoneTop() { return chartBox().y1 + 58; }           // 그 아래 매수·매도 버튼
-function msgPoint() { return { x: ox + W / 2, y: rateBarY() + 17 }; } // 알림은 금리 바 자리 위 (잠깐 덮음)
+function newsY0() { return chartBox().y1 + 28; }           // 뉴스 칸 (높이 40)
+function rateBarY() { return chartBox().y1 + 74; }          // 그 아래 얇은 금리 바 (높이 22)
+function zoneTop() { return chartBox().y1 + 102; }          // 그 아래 매수·매도 버튼
+function msgPoint() { return { x: ox + W / 2, y: rateBarY() + 21 }; } // 알림은 금리 바 자리 위 (뉴스는 안 가림)
 
 function draw() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -284,15 +285,17 @@ function drawZones() {
 
 // 뉴스: 앱 푸시 알림처럼 차트 카드 위에
 function drawNews() {
-  const x = ox + 12, w = W - 24, h = 40, y0 = 118;
-  if (G.news && G.news.kind === 'boss') { drawBossBanner(ox + W / 2, y0 + h / 2, W - 16); return; }
-  if (!G.news) {
+  const x = ox + 12, w = W - 24, h = 40, y0 = newsY0();
+  const boss = G.news && G.news.kind === 'boss';
+  // 보스는 예외: 차트 상단을 덮는 빨간 배너 (아래 뉴스 칸은 비워 둠)
+  if (boss) drawBossBanner(ox + W / 2, CT + BOSS_H / 2 + 2, W - 16);
+  if (!G.news || boss) {
     if (state !== 'play') return;
     g.save();
     g.fillStyle = '#f7f8fa'; roundRect(x, y0, w, h, 16); g.fill();
     g.strokeStyle = '#d1d6db'; g.lineWidth = 1.5; g.setLineDash([5, 6]);
     roundRect(x, y0, w, h, 16); g.stroke(); g.setLineDash([]);
-    T('ニュース待機中…', ox + W / 2, y0 + h / 2 + 5, 13, 700, M.faint, 'center');
+    T(boss ? 'ボス発動中' : 'ニュース待機中…', ox + W / 2, y0 + h / 2 + 5, 13, 700, boss ? M.red : M.faint, 'center');
     g.restore();
     return;
   }
@@ -350,7 +353,7 @@ function drawDanger() {
   const left = Math.abs(G.price / liqPrice() - 1) * 100;
   const text = crit ? `⚠ ロスカット寸前・あと${left.toFixed(1)}%` : `ロスカット注意・あと${left.toFixed(1)}%`;
   const b = chartBox();
-  chip(text, (b.x0 + b.x1) / 2, b.y0 + 22, crit ? '#fff' : '#b34700', crit ? M.red : '#ffe2cc', 'center', 13);
+  chip(text, (b.x0 + b.x1) / 2, b.y0 + (G.boss ? 52 : 22), crit ? '#fff' : '#b34700', crit ? M.red : '#ffe2cc', 'center', 13);
 }
 
 // 체결·손익 알림: 어두운 토스트
