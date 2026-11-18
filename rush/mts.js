@@ -702,12 +702,4 @@ function drawRankUp() {
   g.restore();
 }
 
-// 홈에서 레버리지 칸을 누르면 선택만 (시작은 아래 파란 버튼)
-cv.addEventListener('pointerdown', e => {
-  if (state !== 'menu') return;
-  const b = hit(e.clientX, e.clientY);
-  if (!b || b.act !== 'sel') return;
-  if (b.lev > maxLev(C.money)) { tone(120, 0.12, 'square', 0.05); return; }
-  lastLev = b.lev;
-  tone(880, 0.05, 'sine', 0.04);
-});
+// 레버리지 칸 선택은 game.js의 tapAt에서 처리 (두 테마 공통)

@@ -1594,7 +1594,8 @@ function drawChart() {
     }
     liqDistance(b, lo, hi, ALERT, 'rgba(7,10,20,0.8)');
   }
-  for (const t of tags) {
+  const lobby = state === 'menu' || state === 'ach' || state === 'analysis'; // 로비 뒤편 차트엔 시가·진입·청산 꼬리표 없음
+  for (const t of lobby ? [] : tags) {
     if (t.k === 'open') axisTag(b, t.ty, `시가 ${OPEN.toFixed(1)}`, 'rgba(255,255,255,0.45)', t.y);
     if (t.k === 'entry') axisTag(b, t.ty, `${sideName(G.pos.dir)}${posUnits() > 1 ? 'x' + posUnits() : ''} ${avgEntry().toFixed(1)}`, G.pos.dir > 0 ? UP : DOWN, t.y);
     if (t.k === 'liq') axisTag(b, t.ty, `${t.edge ? (t.edge > 0 ? '▲' : '▼') : ''}청산 ${liqPrice().toFixed(1)}`, ALERT, t.edge ? null : t.y);
@@ -1704,17 +1705,22 @@ function drawTop() {
   // 지수 줄: 종목명 | 현재가 · 등락률 · 남은 시간 (한 줄에)
   const chg = G.price / OPEN - 1, sec = Math.max(0, Math.ceil(ROUND - G.t));
   const urgent = ROUND - G.t <= 10;
-  const tt = `⏱ ${sec}초`;
+  // 타이머 알약: 시계는 직접 그림 (이모지는 기기마다 폭이 달라 글자와 겹침)
+  const tt = `${sec}초`;
   g.font = font(14, 800);
-  const tw = g.measureText(tt).width + 16, tx = ox + W - 18 - tw;
-  g.fillStyle = urgent ? (Math.floor(G.t * 4) % 2 ? UP : 'rgba(255,77,94,0.35)') : 'rgba(63,240,255,0.16)';
+  const tw = 30 + g.measureText(tt).width + 10, tx = ox + W - 18 - tw;
+  const blink = urgent && Math.floor(G.t * 4) % 2, tc = blink ? '#fff' : urgent ? UP : CYAN;
+  g.fillStyle = urgent ? (blink ? UP : 'rgba(255,77,94,0.35)') : 'rgba(63,240,255,0.16)';
   roundRect(tx, 10, tw, 24, 12); g.fill();
-  g.fillStyle = urgent && Math.floor(G.t * 4) % 2 ? '#fff' : urgent ? UP : CYAN;
-  g.fillText(tt, tx + 8, 27);
+  g.strokeStyle = tc; g.lineWidth = 1.8;
+  g.beginPath(); g.arc(tx + 16, 22, 6.5, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.moveTo(tx + 16, 22); g.lineTo(tx + 16, 17.5); g.moveTo(tx + 16, 22); g.lineTo(tx + 19.5, 22); g.stroke();
+  g.textAlign = 'left'; g.fillStyle = tc;
+  g.fillText(tt, tx + 28, 27);
   g.textAlign = 'right';
   g.fillStyle = chg >= 0 ? UP : DOWN;
   g.font = font(15, 800);
-  g.fillText(`${pt(G.price)}  ${pctText(chg)}`, tx - 8, 27);
+  g.fillText(`${pt(G.price)}  ${pctText(chg)}`, tx - 12, 27);
 
   // 큰 숫자 = 지금 청산하면 남는 돈, 바로 옆에 손익 %
   const u = unreal(), eq = G.money + u;
@@ -2136,7 +2142,7 @@ function drawMenu() {
 
   y += 24;
   const showAna = P.rounds >= 3;
-  const ch = tight ? 64 : showAna ? 80 : 110;
+  const ch = tight ? 52 : showAna ? 80 : 110;
   glass(x - 10, y - 10, w + 20, 74 + ch + 20, 18, 0.55);
   drawRankCard(x, y, w, C.money);
   y += 74;
@@ -2158,7 +2164,7 @@ function drawMenu() {
   g.textAlign = 'center';
   g.fillStyle = 'rgba(255,255,255,0.8)';
   g.font = font(14, 700);
-  g.fillText(`레버리지를 골라 시작 · 스택 최대 ${stackCap(C.money)}단`, cx, y);
+  g.fillText(`레버리지 선택 · 스택 최대 ${stackCap(C.money)}단`, cx, y);
   y += 12;
   const mx = maxLev(C.money), bw = (w - 20) / 3, bh = 54;
   const subs = { 1: '안전', 5: '보통', 10: '화끈', 20: '위험', 50: '광기', 100: '전설' };
@@ -2169,7 +2175,8 @@ function drawMenu() {
     g.save();
     g.fillStyle = c + '22';
     roundRect(bx, byy, bw, bh, 12); g.fill();
-    g.strokeStyle = c; g.lineWidth = 2; g.shadowColor = c; g.shadowBlur = open && lv === lastLev ? 22 : open ? 8 : 0;
+    const sel = open && lv === fitLev(lastLev);
+    g.strokeStyle = c; g.lineWidth = sel ? 3.5 : 2; g.shadowColor = c; g.shadowBlur = sel ? 26 : open ? 6 : 0;
     roundRect(bx, byy, bw, bh, 12); g.stroke();
     g.restore();
     g.textAlign = 'center';
@@ -2179,21 +2186,27 @@ function drawMenu() {
     g.fillStyle = open ? c : 'rgba(255,255,255,0.4)';
     g.font = font(12, 600);
     g.fillText(open ? subs[lv] : unlockRank(lv).name, bx + bw / 2, byy + 44);
-    G.buttons.push({ x: bx, y: byy, w: bw, h: bh, act: 'lev', lev: lv });
+    G.buttons.push({ x: bx, y: byy, w: bw, h: bh, act: 'sel', lev: lv });
   });
   y += 2 * (bh + 10) + 2;
   g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(12, 600);
   g.fillText(nextCapText(C.money), cx, y + 6);
   y += 18;
+  // 시작 버튼 (레버리지 칸은 선택만)
+  const lv0 = fitLev(lastLev);
+  button(x, y, w, 50, CYAN, '#00151a', `${lv0}배로 60초 거래 시작`, 'lev');
+  G.buttons[G.buttons.length - 1].lev = lv0;
+  y += 60;
   if (showAna) y += drawAnaCard(x - 10, y, w + 20) + 10;
-
-  const got = ACHS.filter(a => C.ach[a.id]).length;
-  button(x, y, w, 42, '#2a3350', '#fff', `🏆 업적 ${got}/${ACHS.length}`, 'ach');
-  y += 64;
   g.textAlign = 'center';
   g.fillStyle = GOLD;
-  g.font = font(13, 600);
-  g.fillText(`최고 자산 ${kor(C.best)}원 · 한 판 최고 ${pctText(C.bestDay)}`, cx, y);
+  g.font = font(12, 600);
+  g.fillText(`최고 자산 ${kor(C.best)}원 · 한 판 최고 ${pctText(C.bestDay)}`, cx, y + 12);
+  // 업적: 왼쪽 위 구석 둘째 줄
+  const got = ACHS.filter(a => C.ach[a.id]).length, at = `🏆 ${got}/${ACHS.length}`;
+  g.font = font(12, 700); g.textAlign = 'left'; g.fillStyle = GOLD;
+  g.fillText(at, ox + 14, 46);
+  G.buttons.push({ x: ox + 6, y: 32, w: g.measureText(at).width + 16, h: 26, act: 'ach' });
   // 디자인 전환·자본금 리셋: 화면 맨 위 구석 (화면 높이와 상관없이 늘 보임)
   g.font = font(12, 700);
   g.textAlign = 'left'; g.fillStyle = CYAN;
@@ -2537,6 +2550,10 @@ function tapAt(x, y) {
   if (state === 'menu') {
     const b = hit(x, y);
     if (b && b.act === 'lev') startRound(b.lev);
+    if (b && b.act === 'sel') { // 레버리지 칸: 선택만 (시작은 시작 버튼)
+      if (b.lev > maxLev(C.money)) tone(120, 0.12, 'square', 0.05);
+      else { lastLev = b.lev; tone(880, 0.05, 'sine', 0.04); }
+    }
     if (b && b.act === 'ach') state = 'ach';
     if (b && b.act === 'ana') state = 'analysis';
     if (b && b.act === 'resetAsk') resetAsk();
