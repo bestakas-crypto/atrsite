@@ -14,6 +14,7 @@ const CB_DROP = -0.04;       // 시가 대비 -4%면 서킷브레이커
 const CB_HALT = 5;           // 5초 매매 정지
 const INDEX = '한빛200';
 const LEVS = [1, 5, 10, 20, 50, 100];
+const MAX_UNITS = 5;         // 피라미딩: 같은 방향으로 최대 몇 단위까지 쌓을 수 있는지
 const UP = '#ff4d5e', DOWN = '#4d8dff', GOLD = '#ffd34d', CYAN = '#3ff0ff', RUMOR = '#c77dff', ALERT = '#ff2e2e';
 const GREEN = '#5dff9a', ORANGE = '#ff9a3c';
 
@@ -127,6 +128,7 @@ let lastLev = 5;
 const SAVE_KEY = 'futures-career-v1';
 function freshRun(c) {
   c.money = START_MONEY; c.curve = [START_MONEY]; c.rounds = 0; c.streak = 0; c.runRank = 0; c.runBest = START_MONEY;
+  c.runMile = 0; c.runPeak = 1; // 자본금 2^k배 축하 기록, 이번 런 최고 배수
   return c;
 }
 let C = freshRun({ best: START_MONEY, bestDay: 0, ach: {}, runs: 1, lastLev: 5 });
@@ -364,7 +366,7 @@ function newRound(lev) {
     haltUntil: 0, cbDone: false, broke: false,
     news: null, flash: null, shake: 0, parts: [], floats: [], crack: null, pulse: 0, lastSec: ROUND + 1,
     doubled: false, buttons: [], press: { l: 0, r: 0 },
-    toasts: [], newAch: [], confetti: [], rankUp: null, recordDay: false,
+    toasts: [], newAch: [], confetti: [], rankUp: null, recordDay: false, celeb: null, sparks: [], mc: null,
   };
   // 화면을 채울 과거 시세 (시가에서 끝나도록 뒤에서부터)
   let p = OPEN;
@@ -390,8 +392,11 @@ function simTick() {
   if (f) { G.followUps = G.followUps.filter(x => x !== f); showNews(f.text, f.kind); }
 
   if (state !== 'play') return;
-  // 강제청산
-  if (G.pos && unreal() <= -LIQ * G.pos.margin) liquidate();
+  if (checkMarginCall()) return;
+  checkMilestone();
+  // 단위별 강제청산: 청산가에 닿은 단위만
+  if (G.pos) for (const u of G.pos.units.slice()) if (G.pos && unitPnl(u) <= -LIQ * u.margin) liquidateUnit(u);
+  if (state !== 'play') return;
   // 서킷브레이커 (하락만, 한 판에 한 번)
   if (!G.cbDone && G.price / OPEN - 1 <= CB_DROP) {
     G.cbDone = true;
@@ -431,47 +436,90 @@ function fireNews() {
   }
 }
 
-// ---------- 매매 ----------
-function unreal() {
-  if (!G.pos) return 0;
-  return G.pos.notional * (G.price / G.pos.entry - 1) * G.pos.dir;
+// ---------- 매매 (피라미딩: 단위별로 진입가·증거금·청산가를 따로 가짐) ----------
+const sideName = d => d > 0 ? '롱' : '숏';
+function unitPnl(u) { return u.notional * (G.price / u.entry - 1) * G.pos.dir; }
+function unreal() { return G.pos ? G.pos.units.reduce((a, u) => a + unitPnl(u), 0) : 0; }
+function posMargin() { return G.pos.units.reduce((a, u) => a + u.margin, 0); }
+function posUnits() { return G.pos ? G.pos.units.length : 0; }
+// 평균 진입가: 전체 손익이 '계약금액 합 × (현재가/평균 - 1)'과 같아지는 값
+function avgEntry() {
+  const n = G.pos.units.reduce((a, u) => a + u.notional, 0), q = G.pos.units.reduce((a, u) => a + u.notional / u.entry, 0);
+  return n / q;
 }
-function liqPrice() { return G.pos.entry * (1 - G.pos.dir * LIQ * G.pos.margin / G.pos.notional); }
-// 청산까지 얼마나 왔는지: 0 = 진입가, 1 = 강제청산
-function danger() { return G.pos ? Math.max(0, -unreal() / (LIQ * G.pos.margin)) : 0; }
+function unitLiq(u) { return u.entry * (1 - G.pos.dir * LIQ * u.margin / u.notional); }
+// 화면에 보이는 청산가: 가장 가까운(가장 위험한) 단위의 것
+function liqPrice() {
+  const ps = G.pos.units.map(unitLiq);
+  return G.pos.dir > 0 ? Math.max(...ps) : Math.min(...ps);
+}
+// 청산까지 얼마나 왔는지: 0 = 진입가, 1 = 강제청산 (가장 위험한 단위 기준)
+function danger() { return G.pos ? Math.max(0, ...G.pos.units.map(u => -unitPnl(u) / (LIQ * u.margin))) : 0; }
 
-function trade(side) {
-  G.press[side > 0 ? 'l' : 'r'] = 1;
-  if (halted()) { tone(120, 0.12, 'square', 0.05); G.haltNudge = 1; return; } // 정지 중: 팝업만 흔들림
+function toast(text, color, size = 18) {
+  const m = msgPoint();
+  G.floats = [];
+  floatText(text, m.x, m.y, color, size);
+}
+
+function addUnit(side) {
+  const base = G.pos ? G.pos.base : G.money; // 단위 크기 = 첫 진입 때 자산
+  const notional = base * G.lev, fee = notional * FEE;
+  G.money -= fee;
   if (!G.pos) {
-    const notional = G.money * G.lev;
-    const fee = notional * FEE;
-    G.money -= fee;
     const contra = G.news && G.news.kind === 'rumor' && G.news.dir === -side; // 소문 반대로 진입
-    G.pos = { dir: side, entry: G.price, notional, margin: G.money, fee, maxD: 0, contra };
-    side > 0 ? sfx.long() : sfx.short();
-    const m = msgPoint();
-    floatText(side > 0 ? '롱 진입!' : '숏 진입!', m.x, m.y, side > 0 ? UP : DOWN, 18);
-  } else if (G.pos.dir === -side) {
-    closePos();
+    G.pos = { dir: side, base, units: [], maxD: 0, contra, net: 0 };
   }
+  G.pos.units.push({ entry: G.price, notional, margin: base, fee });
 }
 
-function settle() {
-  const u = unreal();
-  const exitFee = (G.pos.notional + u) * FEE;
-  G.money += u - exitFee;
-  const net = u - exitFee - G.pos.fee;
-  G.trades += 1;
-  G.pos = null;
+// 단위 하나 정리: 손익 실현, 스택에서 빼기
+function releaseUnit(u) {
+  const pnl = unitPnl(u), exitFee = (u.notional + pnl) * FEE;
+  G.money += pnl - exitFee;
+  const net = pnl - exitFee - u.fee;
+  G.pos.units = G.pos.units.filter(x => x !== u);
+  G.pos.net += net;
   return net;
 }
 
+function trade(side) {
+  G.press[side > 0 ? 'l' : 'r'] = 1;
+  if (halted()) { tone(120, 0.12, 'square', 0.05); G.haltNudge = 1; return; } // 정지 중: 추가·해제 모두 불가
+  if (!G.pos) {
+    addUnit(side);
+    side > 0 ? sfx.long() : sfx.short();
+    toast(`${sideName(side)} 진입!`, side > 0 ? UP : DOWN);
+  } else if (G.pos.dir === side) {
+    if (posUnits() >= MAX_UNITS) { tone(160, 0.1, 'square', 0.05); toast(`최대 x${MAX_UNITS}까지`, '#aab4c8', 16); return; }
+    addUnit(side);
+    side > 0 ? sfx.long() : sfx.short();
+    toast(`${sideName(side)} 추가! x${posUnits()}`, side > 0 ? UP : DOWN);
+  } else {
+    // 반대 버튼: 마지막에 쌓은 단위부터 1단위 해제
+    const dir = G.pos.dir, net = releaseUnit(G.pos.units[G.pos.units.length - 1]);
+    if (posUnits()) {
+      tone(net >= 0 ? 700 : 260, 0.08, 'triangle', 0.05);
+      toast(`${sideName(dir)} 1단위 해제 ${sign(net)} · 남은 x${posUnits()}`, net >= 0 ? UP : DOWN, 16);
+      checkBroke();
+    } else closeStack();
+  }
+}
+
+// 남은 단위를 모두 정리 (판 마감 때)
 function closePos() {
-  const pos = G.pos;
-  const net = settle();
+  if (!G.pos) return;
+  for (const u of G.pos.units.slice()) releaseUnit(u);
+  closeStack();
+}
+
+// 스택이 비었을 때: 스택 전체 손익으로 콤보·연출
+function closeStack() {
+  const pos = G.pos, net = pos.net;
+  G.pos = null;
+  G.trades += 1;
   const p = pricePoint(), m = msgPoint();
-  G.floats = []; // '진입!' 문구가 남아 있으면 지우고 손익만
+  G.floats = [];
   if (pos.maxD >= 0.9) unlockAch('survive');
   if (net > 0) {
     G.combo += 1;
@@ -500,13 +548,24 @@ function closePos() {
   checkBroke();
 }
 
-function liquidate() {
-  const net = settle();
+// 한 단위 강제청산: 그 단위만 빠지고 스택이 1단위 줄어듦
+function liquidateUnit(u) {
+  const dir = G.pos.dir, net = releaseUnit(u);
   G.combo = 0;
   G.liqs += 1;
+  unlockAch('liq');
   sfx.liq();
+  G.flash = { color: ALERT, life: 0.5 };
+  if (posUnits()) {
+    G.shake = 16;
+    toast(`⚠ ${sideName(dir)} 1단위 강제청산 ${sign(net)} · 남은 x${posUnits()}`, ALERT, 16);
+    checkBroke();
+    return;
+  }
+  const total = G.pos.net;
+  G.pos = null;
+  G.trades += 1;
   G.shake = 26;
-  G.flash = { color: ALERT, life: 0.6 };
   const cx = ox + W / 2, cy = H * 0.42, lines = [];
   for (let i = 0; i < 9; i++) {
     let x = cx, y = cy;
@@ -515,14 +574,75 @@ function liquidate() {
     lines.push(pts);
   }
   G.crack = { lines, life: 1.4 };
+  G.floats = [];
   floatText('강제청산!', cx, cy, ALERT, 44);
-  floatText(sign(net), cx, cy + 50, DOWN, 26);
-  unlockAch('liq');
+  floatText(sign(total), cx, cy + 50, DOWN, 26);
   checkBroke();
 }
 
+// 깡통: 포지션이 다 정리된 뒤 자산이 최소 증거금 아래면 (마진콜이 먼저)
 function checkBroke() {
-  if (G.money < MIN_MONEY) { G.broke = true; endRound(); }
+  if (checkMarginCall()) return;
+  if (!G.pos && G.money < MIN_MONEY) { G.broke = true; endRound(); }
+}
+
+// ---------- 마진콜 ----------
+// 판정은 손익으로: 런 시작(최초 자본금) 이후 실현손익 + 평가손익 합이 -최초 자본금 이하면 발동
+function runPnl() {
+  const realized = G.money - START_MONEY; // 런 내내 이어진 확정 잔액에서 최초 자본금을 뺀 것 = 누적 실현손익
+  return realized + unreal();
+}
+function checkMarginCall() {
+  if (state !== 'play') return false;
+  const pnl = runPnl();
+  if (pnl > -START_MONEY) return false;
+  if (G.pos) { for (const u of G.pos.units.slice()) releaseUnit(u); G.pos = null; }
+  G.mc = { pnl, deficit: Math.max(0, -(START_MONEY + pnl)), at: new Date(), age: 0, rounds: C.rounds + 1, peak: C.runPeak };
+  state = 'margin';
+  sfx.liq();
+  tone(110, 1.2, 'sawtooth', 0.06, 55, 0.4);
+  G.shake = 22;
+  G.flash = { color: ALERT, life: 0.6 };
+  unlockAch('broke');
+  // 빚은 이월하지 않음: 다음 판은 최초 자본금으로 새 런
+  C.rounds += 1;
+  freshRun(C);
+  C.runs += 1;
+  lastLev = fitLev(lastLev);
+  saveCareer();
+  return true;
+}
+
+// ---------- 자본금 2^k배 축하 ----------
+const MILE_MSG = [
+  '',
+  '축하합니다! 제법 하시네요.',
+  '당신은 선물거래에 소질이 있습니다.',
+  '당신은 선물거래를 위해 태어났습니다.',
+  '전설입니다. 지점장님이 당신을 뵙고 싶어합니다.',
+  '본사 VIP 라운지를 열어 두었습니다. 커피는 평생 무료입니다.',
+  '대표이사가 직접 인사드리러 가는 중입니다.',
+  '저희 증권사가 당신 이름으로 펀드를 만들고 싶어합니다.',
+  '한빛200이 당신을 따라 움직인다는 소문이 돕니다.',
+  '중앙은행 총재가 당신의 다음 포지션을 묻습니다.',
+  '당신이 곧 시장입니다. 저희를 거두어 주십시오.',
+];
+function checkMilestone() {
+  const mult = (G.money + unreal()) / START_MONEY;
+  if (mult > C.runPeak) C.runPeak = mult;
+  let k = C.runMile || 0;
+  if (mult < Math.pow(2, k + 1)) return;
+  while (mult >= Math.pow(2, k + 1)) k++;
+  C.runMile = k;
+  G.celeb = { k, life: 3 };
+  for (let i = 0; i < 70; i++) {
+    const b = celebBox();
+    G.sparks.push({ x: ox + rand(20, W - 20), y: b.y + rand(0, b.h), vx: rand(-60, 60), vy: rand(-220, -40), life: rand(1.2, 2.4), s: rand(2, 5) });
+  }
+  [0, 4, 7, 12, 16].forEach((st, i) => tone(784 * Math.pow(2, st / 12), 0.14, 'triangle', 0.06, null, i * 0.07));
+}
+function mileText(k) {
+  return { title: `자본금 ${Math.pow(2, k).toLocaleString('ko-KR')}배 달성!`, msg: MILE_MSG[Math.min(k, MILE_MSG.length - 1)] };
 }
 
 // 떠오르는 글자: 항상 가운데 정렬, 어두운 받침 위에 (차트 선과 섞이지 않게)
@@ -531,6 +651,7 @@ function floatText(text, x, y, color, size) {
 }
 // 손익·진입 문구 자리: 차트 가운데 (가격 꼬리표와 떨어진 곳)
 function zoneTop() { return Math.max(H * 0.75, 340); }
+function celebBox() { return { y: 38, h: 76 }; } // 차트·뉴스·버튼을 피해 자산 숫자 자리 위에
 function msgPoint() {
   return { x: ox + W / 2, y: zoneTop() - 16 };
 }
@@ -543,7 +664,8 @@ function range() {
   let lo = Math.min(...G.hist), hi = Math.max(...G.hist);
   if (G.pos) {
     // 진입가는 항상, 청산가는 6% 안쪽일 때 화면에 들어오게
-    lo = Math.min(lo, G.pos.entry); hi = Math.max(hi, G.pos.entry);
+    const ae = avgEntry();
+    lo = Math.min(lo, ae); hi = Math.max(hi, ae);
     const lq = liqPrice();
     if (Math.abs(lq / G.price - 1) < 0.06) { lo = Math.min(lo, lq); hi = Math.max(hi, lq); }
   }
@@ -558,7 +680,7 @@ function pricePoint() {
 
 // ---------- 진행 ----------
 function update(dt) {
-  if (state !== 'over') {
+  if (state !== 'over' && state !== 'margin') {
     G.acc += dt;
     while (G.acc >= TICK) {
       G.acc -= TICK;
@@ -593,6 +715,10 @@ function update(dt) {
   if (G.news) { G.news.age += dt; if ((G.news.life -= dt) <= 0) G.news = null; }
   G.floats = G.floats.filter(f => (f.life -= dt) > 0);
   G.toasts = G.toasts.filter(f => (f.life -= dt) > 0);
+  if (G.celeb && (G.celeb.life -= dt) <= 0) G.celeb = null;
+  for (const p of G.sparks) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; p.life -= dt; }
+  G.sparks = G.sparks.filter(p => p.life > 0);
+  if (G.mc) G.mc.age += dt;
   if (G.rankUp) G.rankUp.age += dt;
   for (const c of G.confetti) { c.x += c.vx * dt; c.y += c.vy * dt; c.vy += 260 * dt; c.r += c.vr * dt; }
   G.confetti = G.confetti.filter(c => c.y < H + 20);
@@ -682,12 +808,13 @@ function draw() {
   if (state !== 'menu' && state !== 'ach') drawPanels();
   drawChart();
   drawParts(); // 동전은 잔액 숫자 뒤로
-  if (state === 'play' || state === 'over') { drawTop(); drawZones(); drawNews(); }
+  if (state === 'play' || state === 'over' || state === 'margin') { drawTop(); drawZones(); drawNews(); }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
   drawCrack();
   drawFloats();
   drawToasts();
+  drawCelebrate();
   if (G.flash) {
     g.globalAlpha = Math.min(0.28, G.flash.life);
     g.fillStyle = G.flash.color;
@@ -698,6 +825,7 @@ function draw() {
   if (state === 'menu') drawMenu();
   if (state === 'ach') drawAch();
   if (state === 'over') { drawOver(); drawRankUp(); }
+  if (state === 'margin') drawMarginCall();
 }
 
 // 상단 정보 카드와 차트 카드
@@ -763,7 +891,7 @@ function drawChart() {
   const tags = tagLayout(b, lo, hi);
   if (G.pos) {
     const c = G.pos.dir > 0 ? UP : DOWN;
-    const y = yOf(G.pos.entry, b, lo, hi);
+    const y = yOf(avgEntry(), b, lo, hi);
     g.setLineDash([6, 6]);
     g.strokeStyle = c;
     g.lineWidth = 1.5;
@@ -782,7 +910,7 @@ function drawChart() {
   }
   for (const t of tags) {
     if (t.k === 'open') axisTag(b, t.ty, `시가 ${OPEN.toFixed(1)}`, 'rgba(255,255,255,0.45)', t.y);
-    if (t.k === 'entry') axisTag(b, t.ty, `${G.pos.dir > 0 ? '롱' : '숏'} ${G.pos.entry.toFixed(1)}`, G.pos.dir > 0 ? UP : DOWN, t.y);
+    if (t.k === 'entry') axisTag(b, t.ty, `${sideName(G.pos.dir)}${posUnits() > 1 ? 'x' + posUnits() : ''} ${avgEntry().toFixed(1)}`, G.pos.dir > 0 ? UP : DOWN, t.y);
     if (t.k === 'liq') axisTag(b, t.ty, `${t.edge ? (t.edge > 0 ? '▲' : '▼') : ''}청산 ${liqPrice().toFixed(1)}`, ALERT, t.edge ? null : t.y);
   }
 
@@ -809,7 +937,7 @@ function drawChart() {
 function tagLayout(b, lo, hi) {
   const t = [{ k: 'price', y: yOf(G.price, b, lo, hi), h: 26 }];
   if (G.pos) {
-    t.push({ k: 'entry', y: yOf(G.pos.entry, b, lo, hi), h: 20 });
+    t.push({ k: 'entry', y: yOf(avgEntry(), b, lo, hi), h: 20 });
     const lq = liqPrice(), inside = lq > lo && lq < hi;
     t.push({ k: 'liq', y: inside ? yOf(lq, b, lo, hi) : lq < lo ? b.y1 - 10 : b.y0 + 10, h: 20, edge: inside ? 0 : lq < lo ? -1 : 1 });
   }
@@ -921,7 +1049,7 @@ function drawTop() {
   g.fillStyle = 'rgba(255,255,255,0.5)';
   g.font = font(12, 600);
   g.fillText(label, cx - (rw + lw) / 2 + rw, 50);
-  const rate = G.pos ? u / G.pos.margin : (G.money - G.startMoney) / G.startMoney;
+  const rate = G.pos ? u / posMargin() : (G.money - G.startMoney) / G.startMoney;
   const rc = rate >= 0 ? UP : DOWN;
   g.font = font(30, 800);
   const ew = g.measureText(won(eq)).width;
@@ -946,8 +1074,10 @@ function drawTop() {
   g.font = font(13, 600);
   if (G.pos) {
     g.textAlign = 'left';
-    g.fillStyle = 'rgba(255,255,255,0.55)';
-    g.fillText(`확정 잔액 ${won(G.money)}`, ox + 20, 106);
+    g.fillStyle = G.pos.dir > 0 ? UP : DOWN;
+    g.font = font(13, 800);
+    g.fillText(`${sideName(G.pos.dir)} x${posUnits()} · 평균 ${avgEntry().toFixed(2)}`, ox + 20, 106);
+    g.font = font(13, 600);
     g.textAlign = 'right';
     g.fillStyle = rc;
     g.fillText(`평가손익 ${sign(u)}`, ox + W - 20, 106);
@@ -972,11 +1102,8 @@ function drawTop() {
 
 function drawZones() {
   const y0 = zoneTop(), h = H - y0 - 34, w = (W - 48) / 2;
-  const hold = G.pos ? (G.pos.dir > 0 ? '롱 보유 중' : '숏 보유 중') : '';
-  const zones = [
-    { x: ox + 16, c: UP, label: '롱', sub: G.pos && G.pos.dir < 0 ? '숏 청산' : hold || '오른다', p: G.press.l },
-    { x: ox + 32 + w, c: DOWN, label: '숏', sub: G.pos && G.pos.dir > 0 ? '롱 청산' : hold || '내린다', p: G.press.r },
-  ];
+  const zones = [{ x: ox + 16, c: UP, side: 1, p: G.press.l }, { x: ox + 32 + w, c: DOWN, side: -1, p: G.press.r }]
+    .map(z => Object.assign(z, zoneText(z.side)));
   const off = halted();
   for (const z of zones) {
     g.save();
@@ -991,11 +1118,16 @@ function drawZones() {
     g.restore();
     g.textAlign = 'center';
     g.fillStyle = off ? 'rgba(255,255,255,0.3)' : '#fff';
-    g.font = font(30, 800);
+    g.font = font(z.label.length > 2 ? 26 : 30, 800);
     g.fillText(z.label, z.x + w / 2, y0 + h / 2 + 4);
     g.font = font(13, 500);
     g.fillStyle = 'rgba(255,255,255,0.7)';
     g.fillText(off ? '정지' : z.sub, z.x + w / 2, y0 + h / 2 + 28);
+    if (z.badge && !off) { // 보유 단위 배지
+      g.fillStyle = z.c; roundRect(z.x + w - 52, y0 + 10, 42, 24, 12); g.fill();
+      g.fillStyle = '#fff'; g.font = font(14, 900); g.textAlign = 'center';
+      g.fillText(z.badge, z.x + w - 31, y0 + 27);
+    }
   }
 }
 
@@ -1026,29 +1158,6 @@ function newsTag(x, y, tag, c, onFill) {
   return w;
 }
 // 등장 연출 값: 팝(0.3초) + 펄스(1초)
-// 방향 표시: 뉴스가 '말하는' 방향 (소문은 처음 튀는 방향 그대로 — 뒤집힌 뒤 방향은 절대 안 보여줌)
-// 공식 발표는 ─ (중립: 방향 없음)
-function newsArrow(x, y, n, upC, downC, flatC, bgAlpha) {
-  const flat = n.kind === 'official' || !n.dir;
-  const c = flat ? flatC : n.dir > 0 ? upC : downC, s = 38;
-  g.save();
-  g.globalAlpha *= bgAlpha;
-  g.fillStyle = c; roundRect(x, y - s / 2, s, s, 10); g.fill();
-  g.restore();
-  g.save();
-  g.fillStyle = c;
-  if (flat) { roundRect(x + 10, y - 2, s - 20, 4, 2); g.fill(); }
-  else {
-    const d = n.dir > 0 ? -1 : 1; // 위쪽 화살표면 꼭짓점이 위
-    g.beginPath();
-    g.moveTo(x + s / 2, y + d * 11);
-    g.lineTo(x + s / 2 + 11, y - d * 8);
-    g.lineTo(x + s / 2 - 11, y - d * 8);
-    g.closePath(); g.fill();
-  }
-  g.restore();
-  return s;
-}
 function newsAnim(n) {
   const e = 1 - Math.pow(1 - Math.min(1, n.age / 0.3), 3);
   const pop = 0.9 + 0.1 * e + (n.age < 0.5 ? 0.04 * Math.sin(n.age / 0.5 * Math.PI) : 0);
@@ -1062,6 +1171,14 @@ function fitFont(text, maxW, big, small, weight) {
 }
 
 const NEWS_H = 60, NEWS_Y = 186; // 뉴스 칸: 늘 같은 자리 (가운데 높이)
+// 버튼 글자: 보유 방향이면 '추가', 반대면 '1단위 해제'
+function zoneText(side) {
+  const n = posUnits(), nm = sideName(side);
+  if (!G.pos) return { label: nm, sub: side > 0 ? '오른다' : '내린다' };
+  if (G.pos.dir === side) return { label: `${nm} 추가`, sub: n < MAX_UNITS ? `x${n} → x${n + 1}` : `최대 x${MAX_UNITS}`, badge: `x${n}` };
+  return { label: nm, sub: `${sideName(G.pos.dir)} 1단위 해제` };
+}
+
 function drawNews() {
   const x = ox + 16, w = W - 32, h = NEWS_H, cy = NEWS_Y;
   if (!G.news) {
@@ -1098,8 +1215,7 @@ function drawNews() {
     g.globalAlpha = 1;
   }
   const tw = newsTag(-w / 2 + 12, 0, tag, c, tag === '긴급' ? '#fff' : '#0b0f20');
-  newsArrow(w / 2 - 50, 0, n, UP, DOWN, '#d6dbe6', 0.2);
-  const fs = fitFont(body, w - tw - 36 - 48, 17, 13, 800);
+  const fs = fitFont(body, w - tw - 36, 17, 13, 800);
   g.fillStyle = '#fff';
   g.textAlign = 'left';
   g.fillText(body, -w / 2 + tw + 24, fs * 0.36);
@@ -1439,7 +1555,7 @@ function drawOver() {
   y += 24;
   g.fillStyle = 'rgba(255,255,255,0.55)';
   g.font = font(12, 600);
-  g.fillText(G.broke ? `자산이 최소 증거금 ${kor(MIN_MONEY)}원 아래로` : '이번 판 결과', cx, y);
+  g.fillText(G.broke ? `자산이 최소 증거금 ${kor(MIN_MONEY)}원 아래로` : `이번 판 결과 · 최고 자본금 ${C.runPeak.toFixed(1)}배`, cx, y);
   y += 38;
   g.fillStyle = profit >= 0 ? UP : DOWN;
   g.font = font(32, 900);
@@ -1532,6 +1648,117 @@ function drawRankUp() {
   }
 }
 
+// ---------- 자본금 배수 축하 배너 (플레이를 막지 않음, 3초) ----------
+function drawCelebrate() {
+  for (const p of G.sparks) {
+    g.save();
+    g.globalAlpha = Math.min(1, p.life);
+    g.fillStyle = '#ffd34d'; g.shadowColor = '#ffb300'; g.shadowBlur = 8;
+    g.beginPath(); g.arc(p.x, p.y, p.s, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+  const c = G.celeb;
+  if (!c || state === 'menu' || state === 'ach') return;
+  const b = celebBox(), t = 3 - c.life, x = ox + 12, w = W - 24;
+  const a = Math.min(1, t / 0.25, c.life / 0.4), pop = 0.9 + 0.1 * Math.min(1, t / 0.25) + (t < 0.5 ? 0.04 * Math.sin(t / 0.5 * Math.PI) : 0);
+  const { title, msg } = mileText(c.k);
+  g.save();
+  g.globalAlpha = a;
+  g.translate(ox + W / 2, b.y + b.h / 2); g.scale(pop, pop); g.translate(-(ox + W / 2), -(b.y + b.h / 2));
+  const gr = g.createLinearGradient(0, b.y, 0, b.y + b.h);
+  gr.addColorStop(0, '#fff0a8'); gr.addColorStop(0.5, '#ffd34d'); gr.addColorStop(1, '#f0a800');
+  g.shadowColor = '#ffc400'; g.shadowBlur = 26;
+  g.fillStyle = gr; roundRect(x, b.y, w, b.h, 16); g.fill();
+  g.shadowBlur = 0;
+  g.strokeStyle = '#fff8d6'; g.lineWidth = 2; roundRect(x + 1, b.y + 1, w - 2, b.h - 2, 15); g.stroke();
+  g.textAlign = 'center';
+  g.fillStyle = '#3a2600'; g.font = font(21, 900);
+  g.fillText(`👑 ${title}`, ox + W / 2, b.y + b.h * 0.44);
+  g.fillStyle = '#5a3a00';
+  fitFont(msg, w - 28, 15, 11, 800);
+  g.fillText(msg, ox + W / 2, b.y + b.h * 0.8);
+  g.restore();
+}
+
+// ---------- 마진콜 통지서 ----------
+function drawMarginCall() {
+  const m = G.mc;
+  if (!m) return;
+  const e = Math.min(1, m.age / 0.35);
+  g.fillStyle = `rgba(0,0,0,${0.72 * e})`;
+  g.fillRect(-30, -30, innerWidth + 60, innerHeight + 60);
+  const pw = Math.min(W - 28, 420), px = ox + (W - pw) / 2, ph = 500, py = Math.max(12, (H - ph) / 2) + (1 - e) * 40;
+  const SERIF = (px2, wt = 700) => `${wt} ${px2}px "Batang", "Noto Serif KR", "Nanum Myeongjo", serif`;
+  g.save();
+  g.globalAlpha = e;
+  // 종이
+  g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 30; g.shadowOffsetY = 10;
+  g.fillStyle = '#fbf8f0'; roundRect(px, py, pw, ph, 6); g.fill();
+  g.shadowBlur = 0; g.shadowOffsetY = 0;
+  // 머리띠
+  g.fillStyle = '#7d1414'; roundRect(px, py, pw, 54, 6); g.fill(); g.fillRect(px, py + 40, pw, 14);
+  g.textAlign = 'left'; g.fillStyle = '#fff'; g.font = font(13, 800);
+  g.fillText('러시증권', px + 18, py + 33);
+  g.textAlign = 'right'; g.font = SERIF(18, 800);
+  g.fillText('마진콜 통지서', px + pw - 18, py + 28);
+  g.font = font(9, 700); g.fillStyle = 'rgba(255,255,255,0.7)';
+  g.fillText('MARGIN CALL NOTICE', px + pw - 18, py + 44);
+  // 내역
+  const d = m.at, two = n => String(n).padStart(2, '0');
+  const when = `${d.getFullYear()}.${two(d.getMonth() + 1)}.${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+  const rows = [['고객명', '선물러시 고객님'], ['계좌번호', '7777-**-0404 (선물옵션)'], ['통지일시', when],
+    ['누적 손익', `${sign(m.pnl)}원`], ['계좌 평가금액', `${won(START_MONEY + m.pnl)}원`], ['진행한 판', `${m.rounds}판 · 최고 ${m.peak.toFixed(1)}배`]];
+  let y = py + 84;
+  rows.forEach(([a, b], i) => {
+    g.textAlign = 'left'; g.fillStyle = '#7a7366'; g.font = font(12, 600);
+    g.fillText(a, px + 22, y);
+    g.textAlign = 'right'; g.fillStyle = i === 3 || i === 4 ? '#b3261e' : '#2b2722'; g.font = font(13, 800);
+    g.fillText(b, px + pw - 22, y);
+    g.strokeStyle = '#e7e1d3'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(px + 18, y + 10); g.lineTo(px + pw - 18, y + 10); g.stroke();
+    y += 30;
+  });
+  y += 30;
+  // 본문
+  g.textAlign = 'center';
+  g.fillStyle = '#b3261e';
+  fitFontSerif('내일중으로 입금바랍니다.', pw - 40, 26, 16, SERIF);
+  g.fillText('내일중으로 입금바랍니다.', px + pw / 2, y);
+  y += 44;
+  g.fillStyle = '#1f1b16';
+  fitFontSerif('당신은 선물거래를 하지마세요.', pw - 40, 24, 15, SERIF);
+  g.fillText('당신은 선물거래를 하지마세요.', px + pw / 2, y);
+  // 도장
+  g.save();
+  g.translate(px + pw - 62, py + ph - 96);
+  g.rotate(-0.26);
+  g.globalAlpha = e * (0.55 + 0.3 * Math.min(1, Math.max(0, (m.age - 0.4) / 0.2)));
+  g.strokeStyle = '#d0201a'; g.lineWidth = 3;
+  g.beginPath(); g.arc(0, 0, 36, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 1.5; g.beginPath(); g.arc(0, 0, 30, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = '#d0201a'; g.textAlign = 'center';
+  g.font = SERIF(15, 900); g.fillText('반대매매', 0, 2);
+  g.font = font(7, 800); g.fillText('MARGIN CALL', 0, 15);
+  g.restore();
+  // 작은 글씨
+  g.textAlign = 'left'; g.fillStyle = '#a39b8b'; g.font = font(10, 500);
+  g.fillText('※ 가상 게임 화면입니다. 실제 금융거래·회사와 무관.', px + 20, py + ph - 72);
+  // 확인 버튼
+  G.buttons = [];
+  const bx = px + 18, by = py + ph - 58, bw = pw - 36, bh = 44;
+  g.fillStyle = m.age > 0.8 ? '#2b2722' : '#8d877b';
+  roundRect(bx, by, bw, bh, 8); g.fill();
+  g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = font(15, 800);
+  g.fillText('확인 · 100만 원으로 다시 시작', bx + bw / 2, by + 28);
+  G.buttons.push({ x: bx, y: by, w: bw, h: bh, act: 'mcok' });
+  g.restore();
+}
+function fitFontSerif(text, maxW, big, small, SERIF) {
+  let fs = big;
+  while (fs > small && (g.font = SERIF(fs, 900), g.measureText(text).width > maxW)) fs--;
+  g.font = SERIF(fs, 900);
+}
+
 function button(x, y, w, h, bg, fg, label, act, quiet = false) {
   if (quiet) { // 테두리만, 빛 없음
     g.strokeStyle = bg + '99'; g.lineWidth = 1.5;
@@ -1578,6 +1805,7 @@ function tapAt(x, y) {
     return;
   }
   if (state === 'ach') { const b = hit(x, y); if (b) state = 'menu'; return; }
+  if (state === 'margin') { const b = hit(x, y); if (b && b.act === 'mcok' && G.mc.age > 0.8) toMenu(); return; }
   if (state === 'over') {
     if (G.rankUp && !G.rankUp.done) { if (G.rankUp.age > 0.8) G.rankUp.done = true; return; }
     const b = hit(x, y);
@@ -1613,7 +1841,8 @@ addEventListener('keydown', e => {
   if (state === 'play') {
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') trade(1);
     else if (e.code === 'ArrowRight' || e.code === 'KeyD') trade(-1);
-  } else if (state === 'over' && G.rankUp && !G.rankUp.done) { if (G.rankUp.age > 0.8) G.rankUp.done = true; }
+  } else if (state === 'margin') { if ((e.code === 'Space' || e.code === 'Enter') && G.mc.age > 0.8) toMenu(); }
+  else if (state === 'over' && G.rankUp && !G.rankUp.done) { if (G.rankUp.age > 0.8) G.rankUp.done = true; }
   else if (state === 'over' && G.broke) { if (e.code === 'Space' || e.code === 'Enter') restartCareer(); }
   else if (e.code === 'Digit1') startRound(1);
   else if (e.code === 'Digit5') startRound(5);

@@ -32,6 +32,8 @@ function chip(text, x, y, color, bg, align = 'left', size = 12) {
 
 // 쓰지 않는 네온 요소
 function buildBg() {}
+const mtsWord = t => t.replace(/롱/g, '매수').replace(/숏/g, '매도');
+function celebBox() { return { y: 112, h: 104 }; } // 잔고 카드 자리 위에 (차트·뉴스·버튼은 안 가림)
 function drawTicker() {}
 function drawParts() {}
 function drawCrack() {}
@@ -59,13 +61,14 @@ function draw() {
   g.fillStyle = M.bg;
   g.fillRect(0, 0, innerWidth, innerHeight);
   g.translate((Math.random() - 0.5) * G.shake * 0.5, (Math.random() - 0.5) * G.shake * 0.5);
-  if (state === 'play' || state === 'over') {
+  if (state === 'play' || state === 'over' || state === 'margin') {
     drawTop(); drawPanels(); drawChart(); drawZones(); drawNews();
   }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
   drawFloats();
   drawToasts();
+  drawCelebrate();
   if (G.flash) {
     g.globalAlpha = Math.min(0.12, G.flash.life * 0.4);
     g.fillStyle = mc(G.flash.color);
@@ -75,6 +78,7 @@ function draw() {
   if (state === 'menu') drawMenu();
   if (state === 'ach') drawAch();
   if (state === 'over') { drawOver(); drawRankUp(); }
+  if (state === 'margin') drawMarginCall();
 }
 
 // ---------- 상단: 종목 헤더 + 잔고 카드 ----------
@@ -97,7 +101,7 @@ function drawTop() {
   const rk = rankIdx(eq);
   T('평가금액', L, y + 26, 13, 600, M.sub);
   chip(RANKS[rk].name, L + 58, y + 26, RANK_C[rk], RANK_C[rk] + '1f', 'left', 11);
-  const rate = G.pos ? u / G.pos.margin : (G.money - G.startMoney) / G.startMoney;
+  const rate = G.pos ? u / posMargin() : (G.money - G.startMoney) / G.startMoney;
   const rc = rate >= 0 ? M.red : M.blue;
   const s = 1 + G.pulse * 0.08;
   g.font = font(24, 800);
@@ -133,8 +137,8 @@ function drawPanels() {
   card(ox + 12, py, W - 24, ph, 14);
   if (G.pos) {
     const long = G.pos.dir > 0, c = long ? M.red : M.blue;
-    const w = chip(long ? '매수 보유' : '매도 보유', ox + 24, py + 27, c, long ? M.redBg : M.blueBg, 'left', 12);
-    T(`진입 ${G.pos.entry.toFixed(2)}`, ox + 32 + w, py + 27, 13, 700, M.text);
+    const w = chip(`${long ? '매수' : '매도'} x${posUnits()}`, ox + 24, py + 27, c, long ? M.redBg : M.blueBg, 'left', 13);
+    T(`평균 ${avgEntry().toFixed(2)}`, ox + 32 + w, py + 27, 13, 700, M.text);
     T(`청산가 ${liqPrice().toFixed(2)}`, ox + W - 24, py + 27, 13, 700, M.red, 'right');
   } else {
     T('보유 포지션 없음 · 매수 또는 매도로 진입', ox + W / 2, py + 27, 13, 600, M.sub, 'center');
@@ -167,7 +171,7 @@ function drawChart() {
 
   const tags = tagLayout(b, lo, hi);
   if (G.pos) {
-    const c = G.pos.dir > 0 ? M.red : M.blue, y = yOf(G.pos.entry, b, lo, hi);
+    const c = G.pos.dir > 0 ? M.red : M.blue, y = yOf(avgEntry(), b, lo, hi);
     g.strokeStyle = c; g.lineWidth = 1.2; g.setLineDash([5, 4]);
     g.beginPath(); g.moveTo(b.x0, y); g.lineTo(b.x1, y); g.stroke(); g.setLineDash([]);
     const lq = liqPrice();
@@ -180,7 +184,7 @@ function drawChart() {
   }
   for (const t of tags) {
     if (t.k === 'open') axisTag(b, t.ty, `시가 ${OPEN.toFixed(1)}`, M.faint, t.y);
-    if (t.k === 'entry') axisTag(b, t.ty, `${G.pos.dir > 0 ? '매수' : '매도'} ${G.pos.entry.toFixed(1)}`, G.pos.dir > 0 ? M.red : M.blue, t.y);
+    if (t.k === 'entry') axisTag(b, t.ty, `${G.pos.dir > 0 ? '매수' : '매도'}${posUnits() > 1 ? 'x' + posUnits() : ''} ${avgEntry().toFixed(1)}`, G.pos.dir > 0 ? M.red : M.blue, t.y);
     if (t.k === 'liq') axisTag(b, t.ty, `${t.edge ? (t.edge > 0 ? '▲' : '▼') : ''}청산 ${liqPrice().toFixed(1)}`, M.red, t.edge ? null : t.y);
   }
   const p0 = tags.find(t => t.k === 'price'), py = p0.y, pty = p0.ty;
@@ -215,10 +219,10 @@ function drawAxes(b, lo, hi, X) {
 // 주문 버튼: 매수(빨강) / 매도(파랑)
 function drawZones() {
   const y0 = zoneTop(), h = Math.max(70, H - y0 - 20), w = (W - 36) / 2, off = halted();
-  const zones = [
-    { x: ox + 12, c: M.red, label: '매수', sub: G.pos && G.pos.dir < 0 ? '매도 포지션 청산' : G.pos ? '보유 중' : '오른다 · 롱', p: G.press.l },
-    { x: ox + 24 + w, c: M.blue, label: '매도', sub: G.pos && G.pos.dir > 0 ? '매수 포지션 청산' : G.pos ? '보유 중' : '내린다 · 숏', p: G.press.r },
-  ];
+  const zones = [{ x: ox + 12, c: M.red, side: 1, p: G.press.l }, { x: ox + 24 + w, c: M.blue, side: -1, p: G.press.r }].map(z => {
+    const t = zoneText(z.side);
+    return Object.assign(z, { label: mtsWord(t.label), sub: G.pos ? mtsWord(t.sub) : (z.side > 0 ? '오른다 · 롱' : '내린다 · 숏'), badge: t.badge });
+  });
   for (const z of zones) {
     const sq = z.p * 3;
     g.save();
@@ -228,8 +232,12 @@ function drawZones() {
     roundRect(z.x + sq, y0 + sq, w - sq * 2, h - sq * 2, 18); g.fill();
     g.restore();
     g.globalAlpha = off ? 0.6 : 1;
-    T(z.label, z.x + w / 2, y0 + h / 2 + 4, 26, 800, '#fff', 'center');
+    T(z.label, z.x + w / 2, y0 + h / 2 + 4, z.label.length > 2 ? 24 : 26, 800, '#fff', 'center');
     T(off ? '매매 정지' : z.sub, z.x + w / 2, y0 + h / 2 + 28, 13, 600, 'rgba(255,255,255,0.85)', 'center');
+    if (z.badge && !off) { // 보유 단위 배지
+      g.fillStyle = '#fff'; roundRect(z.x + w - 54, y0 + 10, 44, 24, 12); g.fill();
+      T(z.badge, z.x + w - 32, y0 + 27, 14, 900, z.c, 'center');
+    }
     g.globalAlpha = 1;
   }
 }
@@ -269,8 +277,7 @@ function drawNews() {
     g.globalAlpha = 1;
   }
   const tw = newsTag(-w / 2 + 12, 0, tag, tc, tag === '속보' ? '#3d2e00' : '#fff');
-  newsArrow(w / 2 - 50, 0, n, M.red, M.blue, M.sub, 0.12);
-  const fs = fitFont(body, w - tw - 36 - 48, 17, 13, 800);
+  const fs = fitFont(body, w - tw - 36, 17, 13, 800);
   g.fillStyle = M.text; g.textAlign = 'left';
   g.fillText(body, -w / 2 + tw + 24, fs * 0.36);
   g.restore();
@@ -309,7 +316,7 @@ function drawDanger() {
 function drawFloats() {
   for (const f of G.floats) {
     const rise = 0;
-    const text = f.text === '롱 진입!' ? '매수 체결' : f.text === '숏 진입!' ? '매도 체결' : f.text;
+    const text = f.text === '롱 진입!' ? '매수 체결' : f.text === '숏 진입!' ? '매도 체결' : mtsWord(f.text);
     g.save();
     g.globalAlpha = Math.min(1, f.life / 0.4);
     g.translate(f.x, f.y - rise);
@@ -497,6 +504,7 @@ function drawOver() {
   g.fillStyle = M.line; roundRect(x + w / 2 - 20, y0 + 8, 40, 4, 2); g.fill();
   let y = y0 + 40;
   T(G.broke ? '계좌가 깡통이 됐어요' : `${C.rounds}번째 거래 결과`, L, y, 17, 800, G.broke ? M.red : M.text);
+  T(`최고 자본금 ${C.runPeak.toFixed(1)}배`, x + w - 18, y, 13, 800, M.gold, 'right');
   if (G.broke) T(`자산이 최소 증거금 ${kor(MIN_MONEY)}원 아래로 내려갔어요`, L, y + 20, 12, 600, M.sub);
   y += G.broke ? 58 : 44;
   T(`${sign(profit)}원`, L, y, 28, 800, pc);
