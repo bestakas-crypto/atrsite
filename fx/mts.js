@@ -66,7 +66,7 @@ function celebBox() { return { y: 60, h: 54 }; } // 잔고 카드 자리 위에 
 // 하단 티커 (밝은 띠, 네온과 같은 규칙: 플레이 중엔 멈춤)
 function drawTicker() {
   const y = H - 22, now = performance.now() / 1000;
-  const live = state !== 'play';
+  const live = state === 'menu'; // 로비에서만 흐름, 판 중·결과 화면 등은 정지(첫 종목부터 12px)
   if (live && now > tickerNext) { tickerNext = now + 1.5; const t = pick(TICKERS); t.c = Math.max(-3, Math.min(3, t.c + rand(-0.2, 0.2))); }
   if (live) tickerX -= 0.6;
   g.save();
@@ -85,7 +85,7 @@ function drawTicker() {
     return { a, bb, wa, wb, c: it.c };
   });
   tickerX %= total;
-  for (let base = (live ? tickerX : 0) + TICKER_PAD; base < innerWidth; base += total) { // 판 중(정지)엔 첫 종목부터
+  for (let base = (live ? tickerX : 0) + TICKER_PAD; base < innerWidth; base += total) { // 정지 상태엔 첫 종목부터
     let x = base;
     for (const q of parts) {
       g.fillStyle = M.sub; g.fillText(q.a, x, y + 15);
