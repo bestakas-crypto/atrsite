@@ -14,6 +14,34 @@ const CB_DROP = -0.04;       // 시가 대비 -4%면 서킷브레이커
 const CB_HALT = 5;           // 5초 매매 정지
 const INDEX = '한빛200';
 const LEVS = [1, 5, 10, 20, 50, 100];
+// ---------- 보스 뉴스 (희귀·치명: 보유 포지션 반대로 '즉시 충격 + 지속 출혈') ----------
+const BOSS = {
+  chance: 0.13,          // 라운드당 기본 등장 확률
+  cooldown: 4,           // 등장 후 최소 이만큼 라운드는 쉼
+  grace: 2,              // 런 시작 후 처음 이만큼 라운드는 없음
+  wMilestone: 1.8,       // 직전 라운드에 마일스톤 달성 시 확률 배수
+  wStreak: 1.6,          // 3연속 이익 뒤 확률 배수
+  window: [12, 42],      // 이 초 사이 어느 순간 노림 (포지션 없으면 생길 때까지 대기)
+  lastCall: 8,           // 마감 이 초 전부터는 새로 발동하지 않음
+  // 충격은 상처, 드리프트가 처형: 기준 레버리지의 강제청산 거리를 나눠 맡음
+  refLev: 10,            // 기준 레버리지
+  shockRatio: 0.6,       // 충격 = 기준 레버리지 청산 거리의 60% (충격만으론 청산 안 됨)
+  shockSecs: 1.0,        // 충격이 걸리는 시간
+  killSecs: 4,           // 버티면 나머지 40%를 이 초 안에 밀어 청산가 도달
+  shakeSecs: 1.5,        // 발동 직후 흔들림 시간
+  shakePx: 4,            // 흔들림 폭 (작게: 버튼을 누를 수 있게)
+  tint: 0.22,            // 흔들릴 때 화면을 물들이는 붉은빛 농도
+  vignette: 0.32,        // 이후 라운드 끝까지 남는 가장자리 붉은빛 농도
+};
+// 청산 거리 = LIQ × 증거금 / 계약금액 = LIQ / 레버리지 (unitLiq 식과 같음) → 10배면 3%
+const BOSS_LIQ_DIST = LIQ / BOSS.refLev;
+BOSS.shock = BOSS.shockRatio * BOSS_LIQ_DIST;                                      // 10배 기준 1.8%
+BOSS.drift = Math.pow(1 + (1 - BOSS.shockRatio) * BOSS_LIQ_DIST, TICK / BOSS.killSecs) - 1; // 0.1초당 약 0.03%
+const BOSS_CRASH = ['미국 금융위기 발생!', '세계대전 발발 위기!', '미국 초대형 은행 연쇄 파산!',
+  '중국 경제 붕괴, 글로벌 패닉 확산!', '미국 정부 디폴트 선언!', '글로벌 대공황 공포, 전 세계 증시 폭락!'];
+const BOSS_SURGE = ['연준 추가 금리인하 5회 예정!', '정부·한은, 지수 2배 이상 부양 선언!', '전쟁 종결 합의! 전 세계 축제!',
+  '연준 10조 달러 양적완화 전격 단행!', '정부, 전 국민 주식 매수 자금 지원 발표!', '한은 기준금리 0% 전격 인하!'];
+
 // 피라미딩 스택 상한: 라운드 시작 때 자산으로 정해지고 그 판 동안 고정 (100만 원 미만도 최소 2단)
 const STACK_CAPS = [
   { min: 0, cap: 2 },
@@ -140,6 +168,7 @@ const SAVE_KEY = 'futures-career-v1';
 function freshRun(c) {
   c.money = START_MONEY; c.curve = [START_MONEY]; c.rounds = 0; c.streak = 0; c.runRank = 0; c.runBest = START_MONEY;
   c.runMile = 0; c.runPeak = 1; // 자본금 2^k배 축하 기록, 이번 런 최고 배수
+  c.bossLast = -99; c.mileRound = -99; // 보스가 마지막으로 나온 라운드, 마일스톤을 달성한 라운드
   return c;
 }
 let C = freshRun({ best: START_MONEY, bestDay: 0, ach: {}, runs: 1, lastLev: 5 });
@@ -390,26 +419,28 @@ function halted() { return G.t < G.haltUntil; }
 
 function simTick() {
   const seg = G.segs.find(s => G.t >= s.from && G.t < s.until);
-  const trend = seg ? seg.trend : G.trend;
+  let trend = seg ? seg.trend : G.trend;
+  if (G.boss && !seg) trend = G.boss.dir * BOSS.drift + G.trend * 0.3; // 지속 출혈
   const vol = 0.0003 + 0.0001 * Math.min(1, G.t / ROUND);
-  const pull = -0.0015 * (G.price / OPEN - 1); // 시가에서 멀어질수록 되돌아오는 힘
+  const pull = G.boss ? 0 : -0.0015 * (G.price / OPEN - 1); // 시가에서 멀어질수록 되돌아오는 힘 (보스 중엔 없음)
   G.price = Math.max(50, G.price * (1 + trend + pull + vol * randn()));
   G.hist.push(G.price);
   if (G.hist.length > HIST) G.hist.shift();
   G.trend *= 0.97;
   if (G.t >= G.nextShift) { G.trend = randn() * 0.00015; G.nextShift = G.t + rand(2, 4); }
-  if (G.t >= G.nextNews && G.t < ROUND - 4) { fireNews(); G.nextNews = G.t + rand(6, 9); }
+  if (!G.boss && G.t >= G.nextNews && G.t < ROUND - 4) { fireNews(); G.nextNews = G.t + rand(6, 9); }
   const f = G.followUps.find(x => G.t >= x.at);
   if (f) { G.followUps = G.followUps.filter(x => x !== f); showNews(f.text, f.kind); }
 
   if (state !== 'play') return;
   if (checkMarginCall()) return;
   checkMilestone();
+  if (G.bossAt != null && !G.boss && G.pos && !halted() && G.t >= G.bossAt && G.t < ROUND - BOSS.lastCall) fireBoss();
   // 단위별 강제청산: 청산가에 닿은 단위만
   if (G.pos) for (const u of G.pos.units.slice()) if (G.pos && unitPnl(u) <= -LIQ * u.margin) liquidateUnit(u);
   if (state !== 'play') return;
   // 서킷브레이커 (하락만, 한 판에 한 번)
-  if (!G.cbDone && G.price / OPEN - 1 <= CB_DROP) {
+  if (!G.boss && !G.cbDone && G.price / OPEN - 1 <= CB_DROP) { // 보스 중엔 출구를 막지 않음
     G.cbDone = true;
     G.haltUntil = G.t + CB_HALT;
     G.segs = [{ from: G.t + CB_HALT, until: G.t + CB_HALT + 2, trend: 0.0006 }]; // 재개 직후 반등
@@ -421,7 +452,8 @@ function simTick() {
 }
 
 function showNews(text, kind, dir = 0) {
-  G.news = { text, kind, dir, life: 8, age: 0 }; // 최소 8초 또렷하게
+  if (G.boss && kind !== 'boss') return; // 보스 중엔 일반 뉴스 표시 안 함
+  G.news = { text, kind, dir, life: kind === 'boss' ? 1e9 : 8, age: 0 }; // 최소 8초 또렷하게, 보스는 판 끝까지
   if (state !== 'play') return;
   if (kind === 'bomb') { sfx.siren(); G.flash = { color: ALERT, life: 0.4 }; G.shake = 8; }
   else { sfx.news(); G.flash = { color: kind === 'rumor' ? RUMOR : GOLD, life: 0.25 }; }
@@ -645,6 +677,7 @@ function checkMilestone() {
   if (mult < Math.pow(2, k + 1)) return;
   while (mult >= Math.pow(2, k + 1)) k++;
   C.runMile = k;
+  C.mileRound = C.rounds + 1;
   G.celeb = { k, life: 3 };
   for (let i = 0; i < 70; i++) {
     const b = celebBox();
@@ -746,6 +779,88 @@ function startRound(lev) {
   recent.last = recent.now; recent.now = new Set();
   state = 'play';
   toast(`이번 판 최대 ${G.cap}단`, CYAN, 18);
+  planBoss();
+}
+
+// 이번 판에 보스가 나올지 정함 (나온다면 노릴 시각만 정하고, 실제 발동은 포지션이 있을 때)
+function planBoss() {
+  G.bossAt = null;
+  const idx = C.rounds + 1; // 이번 라운드 번호
+  if (C.rounds < BOSS.grace) return;
+  if (idx - C.bossLast <= BOSS.cooldown) return;
+  let p = BOSS.chance;
+  if (C.mileRound === C.rounds) p *= BOSS.wMilestone; // 직전 라운드에 마일스톤
+  if (C.streak >= 3) p *= BOSS.wStreak;
+  if (Math.random() < p) G.bossAt = rand(BOSS.window[0], BOSS.window[1]);
+}
+
+function fireBoss() {
+  const dir = -G.pos.dir; // 항상 보유 포지션의 반대
+  const text = pick(dir < 0 ? BOSS_CRASH : BOSS_SURGE);
+  const size = BOSS.shock, ticks = BOSS.shockSecs / TICK;
+  G.boss = { dir, at: G.t };
+  C.bossLast = C.rounds + 1;
+  G.followUps = [];
+  G.segs = [{ from: G.t, until: G.t + BOSS.shockSecs, trend: dir * (Math.pow(1 + size, 1 / ticks) - 1) }];
+  G.news = null;
+  showNews(`[보스] ${text}`, 'boss', dir);
+  sfx.siren(); sfx.halt();
+  tone(55, 1.4, 'sawtooth', 0.08, 40);
+}
+// 보스 화면 효과: 발동 직후 흔들림+붉은빛, 그 뒤 가장자리 붉은빛만
+function bossShakeOffset() {
+  if (!G.boss || state !== 'play') return 0;
+  const age = G.t - G.boss.at;
+  if (age > BOSS.shakeSecs) return 0;
+  return (Math.random() - 0.5) * 2 * BOSS.shakePx * (1 - age / BOSS.shakeSecs);
+}
+function drawBossFx() {
+  if (!G.boss || state !== 'play') return;
+  const age = G.t - G.boss.at;
+  g.save();
+  if (age < BOSS.shakeSecs) {
+    g.fillStyle = `rgba(255,20,20,${BOSS.tint * (1 - age / BOSS.shakeSecs)})`;
+    g.fillRect(-30, -30, innerWidth + 60, innerHeight + 60);
+  }
+  const vg = g.createRadialGradient(innerWidth / 2, H / 2, Math.min(W, H) * 0.32, innerWidth / 2, H / 2, Math.max(W, H) * 0.72);
+  vg.addColorStop(0, 'rgba(255,20,20,0)');
+  vg.addColorStop(1, `rgba(220,0,0,${BOSS.vignette})`);
+  g.fillStyle = vg;
+  g.fillRect(-30, -30, innerWidth + 60, innerHeight + 60);
+  g.restore();
+}
+// 보스 배너: 일반 뉴스보다 크고, 각진 검정·빨강 태그 (두 테마 공통)
+const BOSS_H = 78;
+function drawBossBanner(cx, cy, w) {
+  const n = G.news, { body } = newsParts(n), a = newsAnim(n), h = BOSS_H;
+  const beat = 0.5 + 0.5 * Math.sin(n.age * 8);
+  g.save();
+  g.translate(cx, cy - (1 - a.e) * 18);
+  g.scale(a.pop * 1.02, a.pop * 1.02);
+  const gr = g.createLinearGradient(0, -h / 2, 0, h / 2);
+  gr.addColorStop(0, '#3a0000'); gr.addColorStop(1, '#120000');
+  g.shadowColor = '#ff1a1a'; g.shadowBlur = 24 + beat * 18;
+  g.fillStyle = gr; g.fillRect(-w / 2, -h / 2, w, h);
+  g.shadowBlur = 0;
+  // 경고 줄무늬 테두리
+  g.save();
+  g.beginPath(); g.rect(-w / 2, -h / 2, w, h); g.rect(-w / 2 + 6, -h / 2 + 6, w - 12, h - 12); g.clip('evenodd');
+  for (let x = -w / 2 - h; x < w / 2 + h; x += 16) {
+    g.fillStyle = '#ff2e2e'; g.beginPath(); g.moveTo(x, -h / 2); g.lineTo(x + 8, -h / 2); g.lineTo(x + 8 + h, h / 2); g.lineTo(x + h, h / 2); g.closePath(); g.fill();
+  }
+  g.restore();
+  g.strokeStyle = `rgba(255,80,80,${0.6 + 0.4 * beat})`; g.lineWidth = 2;
+  g.strokeRect(-w / 2 + 6, -h / 2 + 6, w - 12, h - 12);
+  // 태그: 각진 검정 상자 + 빨간 글자 (일반 태그는 둥근 알약)
+  g.font = font(15, 900);
+  const tt = '☠ 보스', tw = g.measureText(tt).width + 18;
+  g.fillStyle = '#000'; g.fillRect(-w / 2 + 16, -15, tw, 30);
+  g.strokeStyle = '#ff2e2e'; g.lineWidth = 2; g.strokeRect(-w / 2 + 16, -15, tw, 30);
+  g.fillStyle = '#ff3b3b'; g.textAlign = 'left'; g.fillText(tt, -w / 2 + 25, 6);
+  const fs = fitFont(body, w - tw - 44, 20, 13, 900);
+  g.fillStyle = '#fff'; g.shadowColor = '#ff2e2e'; g.shadowBlur = 10;
+  g.fillText(body, -w / 2 + tw + 28, fs * 0.36);
+  g.restore();
 }
 
 // ---------- 정리 버튼 (상단 구석, 일부러 작고 멀리) ----------
@@ -846,7 +961,7 @@ function toMenu() {
 function draw() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.drawImage(state === 'play' ? BGQ : BG, 0, 0, innerWidth, innerHeight);
-  g.translate((Math.random() - 0.5) * G.shake, (Math.random() - 0.5) * G.shake);
+  g.translate((Math.random() - 0.5) * G.shake + bossShakeOffset(), (Math.random() - 0.5) * G.shake + bossShakeOffset());
 
   drawGrid();
   if (state !== 'menu' && state !== 'ach') drawPanels();
@@ -855,6 +970,7 @@ function draw() {
   if (state === 'play' || state === 'over' || state === 'margin') { drawTop(); drawZones(); drawNews(); drawCtl(); }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
+  drawBossFx();
   drawCrack();
   drawFloats();
   drawToasts();
@@ -1222,6 +1338,7 @@ function zoneText(side) {
 
 function drawNews() {
   const x = ox + 16, w = W - 32, h = NEWS_H, cy = NEWS_Y;
+  if (G.news && G.news.kind === 'boss') { drawBossBanner(ox + W / 2, cy, W - 24); return; }
   if (!G.news) {
     if (state !== 'play') return;
     // 뉴스가 없을 때도 자리 표시

@@ -77,12 +77,13 @@ function draw() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.fillStyle = M.bg;
   g.fillRect(0, 0, innerWidth, innerHeight);
-  g.translate((Math.random() - 0.5) * G.shake * 0.5, (Math.random() - 0.5) * G.shake * 0.5);
+  g.translate((Math.random() - 0.5) * G.shake * 0.5 + bossShakeOffset(), (Math.random() - 0.5) * G.shake * 0.5 + bossShakeOffset());
   if (state === 'play' || state === 'over' || state === 'margin') {
     drawTop(); drawPanels(); drawChart(); drawZones(); drawNews(); drawCtl();
   }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
+  drawBossFx();
   drawFloats();
   drawToasts();
   drawCelebrate();
@@ -262,6 +263,7 @@ function drawZones() {
 // 뉴스: 앱 푸시 알림처럼 차트 카드 위에
 function drawNews() {
   const x = ox + 12, w = W - 24, h = 60, y0 = 224;
+  if (G.news && G.news.kind === 'boss') { drawBossBanner(ox + W / 2, y0 + h / 2, W - 16); return; }
   if (!G.news) {
     if (state !== 'play') return;
     g.save();
