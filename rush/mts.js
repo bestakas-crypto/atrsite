@@ -33,6 +33,23 @@ function chip(text, x, y, color, bg, align = 'left', size = 12) {
 // 쓰지 않는 네온 요소
 function buildBg() {}
 const mtsWord = t => t.replace(/롱/g, '매수').replace(/숏/g, '매도');
+function ctlRects() {
+  const R = ox + W - 16;
+  return [{ act: 'flat', label: '일괄청산', x: R - 124, y: 14, w: 58, h: 26 }, { act: 'stop', label: '투자중지', x: R - 60, y: 14, w: 58, h: 26 }];
+}
+function drawCtl() {
+  if (state !== 'play') return;
+  G.ctl = ctlRects();
+  for (const c of G.ctl) {
+    const on = ctlEnabled(c.act);
+    g.save();
+    g.globalAlpha = on ? 1 : 0.35;
+    g.strokeStyle = M.line; g.lineWidth = 1;
+    roundRect(c.x + 0.5, c.y + 0.5, c.w - 1, c.h - 1, 7); g.stroke();
+    T(c.label, c.x + c.w / 2, c.y + 17, 11, 700, M.sub, 'center');
+    g.restore();
+  }
+}
 function celebBox() { return { y: 112, h: 104 }; } // 잔고 카드 자리 위에 (차트·뉴스·버튼은 안 가림)
 function drawTicker() {}
 function drawParts() {}
@@ -62,7 +79,7 @@ function draw() {
   g.fillRect(0, 0, innerWidth, innerHeight);
   g.translate((Math.random() - 0.5) * G.shake * 0.5, (Math.random() - 0.5) * G.shake * 0.5);
   if (state === 'play' || state === 'over' || state === 'margin') {
-    drawTop(); drawPanels(); drawChart(); drawZones(); drawNews();
+    drawTop(); drawPanels(); drawChart(); drawZones(); drawNews(); drawCtl();
   }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
@@ -137,11 +154,11 @@ function drawPanels() {
   card(ox + 12, py, W - 24, ph, 14);
   if (G.pos) {
     const long = G.pos.dir > 0, c = long ? M.red : M.blue;
-    const w = chip(`${long ? '매수' : '매도'} x${posUnits()}`, ox + 24, py + 27, c, long ? M.redBg : M.blueBg, 'left', 13);
+    const w = chip(`${long ? '매수' : '매도'} x${posUnits()} / 최대 ${G.cap}단`, ox + 24, py + 27, c, long ? M.redBg : M.blueBg, 'left', 12);
     T(`평균 ${avgEntry().toFixed(2)}`, ox + 32 + w, py + 27, 13, 700, M.text);
     T(`청산가 ${liqPrice().toFixed(2)}`, ox + W - 24, py + 27, 13, 700, M.red, 'right');
   } else {
-    T('보유 포지션 없음 · 매수 또는 매도로 진입', ox + W / 2, py + 27, 13, 600, M.sub, 'center');
+    T(`보유 포지션 없음 · 이번 판 최대 ${G.cap}단`, ox + W / 2, py + 27, 13, 600, M.sub, 'center');
   }
 }
 
@@ -439,7 +456,7 @@ function drawMenu() {
   const lh = 152;
   card(x, y, w, lh);
   T('레버리지', L, y + 28, 15, 800, M.text);
-  T('자산이 커지면 높은 배율이 열려요', x + w - 16, y + 28, 12, 600, M.sub, 'right');
+  T(`스택 최대 ${stackCap(C.money)}단 · ${nextCapText(C.money)}`, x + w - 16, y + 28, 11, 600, M.sub, 'right');
   const mx = maxLev(C.money), bw = (IW - 16) / 3, bh = 46;
   const subs = { 1: '안전', 5: '보통', 10: '화끈', 20: '위험', 50: '광기', 100: '전설' };
   LEVS.forEach((lv, i) => {
@@ -537,7 +554,7 @@ function drawOver() {
     T(`이번 도전 최고 ${kor(C.runBest)}원 · 업적과 최고 기록은 남아요`, x + w / 2, y + 74, 12, 600, M.sub, 'center');
     return;
   }
-  button(L, y, IW, 54, CYAN, '#fff', `다음 거래 (${fitLev(G.lev)}배)`, 'again');
+  button(L, y, IW, 54, CYAN, '#fff', `다음 거래 (${fitLev(G.lev)}배 · 최대 ${stackCap(C.money)}단)`, 'again');
   y += 62;
   if (showDouble) { button(L, y, IW, 42, GOLD, '#000', '광고 보고 이번 판 수익 2배', 'double', true); y += 50; }
   button(L, y, IW, 44, '#2a3350', M.text, '홈으로', 'menu');

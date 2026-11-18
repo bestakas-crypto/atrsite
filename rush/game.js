@@ -2,7 +2,7 @@
 // 선물 러시 — 60초 가상 지수 선물 롱숏 아케이드 데모.
 // 지수·뉴스·기관은 모두 가상이며 실제 시장·인물과 관계없습니다.
 
-const ROUND = 60;            // 한 판 60초
+const ROUND = 60;            // 한 판 60초 고정 (자산이 늘어도 길어지지 않음)
 const TICK = 0.1;            // 시세는 0.1초마다 움직임
 const HIST = 150;            // 화면에 보이는 15초
 const FEE = 0.0001;          // 수수료: 계약금액의 0.01%
@@ -14,7 +14,18 @@ const CB_DROP = -0.04;       // 시가 대비 -4%면 서킷브레이커
 const CB_HALT = 5;           // 5초 매매 정지
 const INDEX = '한빛200';
 const LEVS = [1, 5, 10, 20, 50, 100];
-const MAX_UNITS = 5;         // 피라미딩: 같은 방향으로 최대 몇 단위까지 쌓을 수 있는지
+// 피라미딩 스택 상한: 라운드 시작 때 자산으로 정해지고 그 판 동안 고정 (100만 원 미만도 최소 2단)
+const STACK_CAPS = [
+  { min: 0, cap: 2 },
+  { min: 5e6, cap: 3 },
+  { min: 1e7, cap: 4 },
+  { min: 5e7, cap: 5 },
+];
+function stackCap(m) { let c = STACK_CAPS[0].cap; for (const s of STACK_CAPS) if (m >= s.min) c = s.cap; return c; }
+function nextCapText(m) {
+  const n = STACK_CAPS.find(s => s.min > m);
+  return n ? `${kor(n.min)}원 달성 시 ${n.cap}단 해금` : '최대 단수 해금 완료';
+}
 const UP = '#ff4d5e', DOWN = '#4d8dff', GOLD = '#ffd34d', CYAN = '#3ff0ff', RUMOR = '#c77dff', ALERT = '#ff2e2e';
 const GREEN = '#5dff9a', ORANGE = '#ff9a3c';
 
@@ -361,7 +372,7 @@ const sfx = {
 // ---------- 한 판 ----------
 function newRound(lev) {
   G = {
-    lev, t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
+    lev, cap: stackCap(C.money), ctl: [], t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
     money: C.money, startMoney: C.money, pos: null, combo: 0, bestCombo: 0, trades: 0, wins: 0, liqs: 0,
     haltUntil: 0, cbDone: false, broke: false,
     news: null, flash: null, shake: 0, parts: [], floats: [], crack: null, pulse: 0, lastSec: ROUND + 1,
@@ -491,7 +502,7 @@ function trade(side) {
     side > 0 ? sfx.long() : sfx.short();
     toast(`${sideName(side)} 진입!`, side > 0 ? UP : DOWN);
   } else if (G.pos.dir === side) {
-    if (posUnits() >= MAX_UNITS) { tone(160, 0.1, 'square', 0.05); toast(`최대 x${MAX_UNITS}까지`, '#aab4c8', 16); return; }
+    if (posUnits() >= G.cap) { tone(160, 0.1, 'square', 0.05); toast(`이번 판 최대 ${G.cap}단`, '#aab4c8', 16); return; }
     addUnit(side);
     side > 0 ? sfx.long() : sfx.short();
     toast(`${sideName(side)} 추가! x${posUnits()}`, side > 0 ? UP : DOWN);
@@ -734,6 +745,39 @@ function startRound(lev) {
   newRound(lev);
   recent.last = recent.now; recent.now = new Set();
   state = 'play';
+  toast(`이번 판 최대 ${G.cap}단`, CYAN, 18);
+}
+
+// ---------- 정리 버튼 (상단 구석, 일부러 작고 멀리) ----------
+// 일괄청산: 전 단위를 현재가로 정리, 판은 계속
+function flattenAll() {
+  if (!G.pos || halted()) return;
+  for (const u of G.pos.units.slice()) releaseUnit(u);
+  closeStack();
+}
+// 투자중지: 전 단위 정리하고 판을 바로 끝냄 (포지션이 없어도 종료)
+function stopInvest() {
+  if (halted()) return;
+  endRound();
+}
+// 버튼 자리 (네온: 상단 카드 왼쪽 위 구석)
+function ctlRects() {
+  return [{ act: 'flat', label: '일괄청산', x: ox + 16, y: 13, w: 58, h: 24 }, { act: 'stop', label: '투자중지', x: ox + 80, y: 13, w: 58, h: 24 }];
+}
+function ctlEnabled(act) { return !halted() && (act === 'stop' || !!G.pos); }
+function drawCtl() {
+  if (state !== 'play') return;
+  G.ctl = ctlRects();
+  for (const c of G.ctl) {
+    const on = ctlEnabled(c.act);
+    g.save();
+    g.globalAlpha = on ? 1 : 0.3;
+    g.strokeStyle = 'rgba(255,255,255,0.28)'; g.lineWidth = 1;
+    roundRect(c.x + 0.5, c.y + 0.5, c.w - 1, c.h - 1, 6); g.stroke();
+    g.fillStyle = 'rgba(255,255,255,0.62)'; g.font = font(11, 700); g.textAlign = 'center';
+    g.fillText(c.label, c.x + c.w / 2, c.y + 16);
+    g.restore();
+  }
 }
 
 function endRound() {
@@ -808,7 +852,7 @@ function draw() {
   if (state !== 'menu' && state !== 'ach') drawPanels();
   drawChart();
   drawParts(); // 동전은 잔액 숫자 뒤로
-  if (state === 'play' || state === 'over' || state === 'margin') { drawTop(); drawZones(); drawNews(); }
+  if (state === 'play' || state === 'over' || state === 'margin') { drawTop(); drawZones(); drawNews(); drawCtl(); }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
   drawCrack();
@@ -1018,10 +1062,6 @@ function drawTop() {
   // 지수 줄: 종목명 | 현재가 · 등락률 · 남은 시간 (한 줄에)
   const chg = G.price / OPEN - 1, sec = Math.max(0, Math.ceil(ROUND - G.t));
   const urgent = ROUND - G.t <= 10;
-  g.textAlign = 'left';
-  g.fillStyle = 'rgba(255,255,255,0.6)';
-  g.font = font(13, 600);
-  g.fillText(`${INDEX} 선물`, ox + 20, 26);
   const tt = `⏱ ${sec}초`;
   g.font = font(14, 800);
   const tw = g.measureText(tt).width + 16, tx = ox + W - 18 - tw;
@@ -1076,7 +1116,8 @@ function drawTop() {
     g.textAlign = 'left';
     g.fillStyle = G.pos.dir > 0 ? UP : DOWN;
     g.font = font(13, 800);
-    g.fillText(`${sideName(G.pos.dir)} x${posUnits()} · 평균 ${avgEntry().toFixed(2)}`, ox + 20, 106);
+    g.font = font(12, 800);
+    g.fillText(`${sideName(G.pos.dir)} x${posUnits()} / 최대 ${G.cap}단 · 평균 ${avgEntry().toFixed(2)}`, ox + 20, 106);
     g.font = font(13, 600);
     g.textAlign = 'right';
     g.fillStyle = rc;
@@ -1084,7 +1125,7 @@ function drawTop() {
   } else {
     g.textAlign = 'center';
     g.fillStyle = 'rgba(255,255,255,0.45)';
-    g.fillText(`레버리지 ${G.lev}배 · 포지션 없음`, cx, 106);
+    g.fillText(`${G.lev}배 · 포지션 없음 · 이번 판 최대 ${G.cap}단`, cx, 106);
   }
 
   const left = Math.max(0, 1 - G.t / ROUND);
@@ -1175,7 +1216,7 @@ const NEWS_H = 60, NEWS_Y = 186; // 뉴스 칸: 늘 같은 자리 (가운데 높
 function zoneText(side) {
   const n = posUnits(), nm = sideName(side);
   if (!G.pos) return { label: nm, sub: side > 0 ? '오른다' : '내린다' };
-  if (G.pos.dir === side) return { label: `${nm} 추가`, sub: n < MAX_UNITS ? `x${n} → x${n + 1}` : `최대 x${MAX_UNITS}`, badge: `x${n}` };
+  if (G.pos.dir === side) return { label: n < G.cap ? `${nm} 추가` : nm, sub: n < G.cap ? `x${n} → x${n + 1}` : `최대 ${G.cap}단 보유 중`, badge: `x${n}` };
   return { label: nm, sub: `${sideName(G.pos.dir)} 1단위 해제` };
 }
 
@@ -1470,7 +1511,7 @@ function drawMenu() {
 
   g.fillStyle = 'rgba(255,255,255,0.8)';
   g.font = font(14, 700);
-  g.fillText('레버리지를 골라 시작', cx, y);
+  g.fillText(`레버리지를 골라 시작 · 스택 최대 ${stackCap(C.money)}단`, cx, y);
   y += 12;
   G.buttons = [];
   const mx = maxLev(C.money), bw = (w - 20) / 3, bh = 54;
@@ -1494,7 +1535,10 @@ function drawMenu() {
     g.fillText(open ? subs[lv] : unlockRank(lv).name, bx + bw / 2, byy + 44);
     G.buttons.push({ x: bx, y: byy, w: bw, h: bh, act: 'lev', lev: lv });
   });
-  y += 2 * (bh + 10) + 8;
+  y += 2 * (bh + 10) + 2;
+  g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(12, 600);
+  g.fillText(nextCapText(C.money), cx, y + 6);
+  y += 18;
 
   const got = ACHS.filter(a => C.ach[a.id]).length;
   button(x, y, w, 42, '#2a3350', '#fff', `🏆 업적 ${got}/${ACHS.length}`, 'ach');
@@ -1594,7 +1638,7 @@ function drawOver() {
     return;
   }
   const lev = fitLev(G.lev);
-  button(px + 18, y, pw - 36, 54, CYAN, '#00151a', `다음 판 (${lev}배)`, 'again');
+  button(px + 18, y, pw - 36, 54, CYAN, '#00151a', `다음 판 (${lev}배 · 최대 ${stackCap(C.money)}단)`, 'again');
   y += 64;
   if (showDouble) { button(px + 18, y, pw - 36, 44, GOLD, GOLD, '광고 보고 이번 판 수익 2배', 'double', true); y += 54; }
   button(px + 18, y, pw - 36, 40, '#2a3350', '#fff', '메뉴 · 레버리지 바꾸기', 'menu');
@@ -1832,6 +1876,8 @@ function tapAt(x, y) {
     }
     return;
   }
+  const c = (G.ctl || []).find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+  if (c) { if (ctlEnabled(c.act)) (c.act === 'flat' ? flattenAll : stopInvest)(); return; }
   trade(x < ox + W / 2 ? 1 : -1);
 }
 cv.addEventListener('pointerdown', e => { e.preventDefault(); tapAt(e.clientX, e.clientY); });
