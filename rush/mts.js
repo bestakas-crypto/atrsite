@@ -50,6 +50,16 @@ function drawCtl() {
     g.restore();
   }
 }
+// 금리 바: 얇은 흰 띠
+function drawRateBar() {
+  const y = rateBarY(), x = ox + 12, w = W - 24, h = 24, L = rateLabels();
+  card(x, y, w, h, 12);
+  g.font = font(12, 700);
+  T(L.rate, x + 14, y + 16, 12, 700, M.text);
+  const rw = g.measureText(L.rate).width;
+  T(L.trend, x + 24 + rw, y + 16, 12, 800, L.tr ? '#d97a00' : '#c9a36a');
+  T(L.flow, x + w - 14, y + 16, 12, 800, L.tr > 0 ? M.blue : L.tr < 0 ? M.red : M.faint, 'right');
+}
 function celebBox() { return { y: 112, h: 104 }; } // 잔고 카드 자리 위에 (차트·뉴스·버튼은 안 가림)
 function drawTicker() {}
 function drawParts() {}
@@ -70,8 +80,9 @@ function chartBox() {
   return { x0: ox + 24, x1: ox + W - 86, y0: CT + 30, y1: bot - 34 };
 }
 // 체결·손익 알림은 차트 아래 '보유 포지션' 줄 위에
-function zoneTop() { return chartBox().y1 + 98; }
-function msgPoint() { return { x: ox + W / 2, y: chartBox().y1 + 66 + 7 }; }
+function zoneTop() { return chartBox().y1 + 126; }
+function rateBarY() { return chartBox().y1 + 42; } // 차트 카드 바로 아래
+function msgPoint() { return { x: ox + W / 2, y: chartBox().y1 + 94 + 7 }; }
 
 function draw() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -79,7 +90,7 @@ function draw() {
   g.fillRect(0, 0, innerWidth, innerHeight);
   g.translate((Math.random() - 0.5) * G.shake * 0.5 + bossShakeOffset(), (Math.random() - 0.5) * G.shake * 0.5 + bossShakeOffset());
   if (state === 'play' || state === 'over' || state === 'margin') {
-    drawTop(); drawPanels(); drawChart(); drawZones(); drawNews(); drawCtl();
+    drawTop(); drawPanels(); drawChart(); drawZones(); drawNews(); drawCtl(); drawRateBar();
   }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
@@ -151,7 +162,7 @@ function drawPanels() {
   T(`시가 ${OPEN.toFixed(2)}`, ox + W - 24, CT + 20, 12, 600, M.sub, 'right');
 
   // 포지션 줄
-  const py = b.y1 + 44, ph = 44;
+  const py = b.y1 + 72, ph = 44;
   card(ox + 12, py, W - 24, ph, 14);
   if (G.pos) {
     const long = G.pos.dir > 0, c = long ? M.red : M.blue;
@@ -516,7 +527,7 @@ function drawOver() {
   const profit = G.money - G.startMoney, rate = profit / G.startMoney, pc = profit >= 0 ? M.red : M.blue;
   const showDouble = profit > 0 && !G.doubled && !G.broke;
   const ch = H < 720 ? 70 : 100;
-  const sh = 268 + ch + (G.newAch.length ? 30 : 0) + (G.broke ? 92 : (showDouble ? 56 : 0) + 112);
+  const sh = 282 + ch + (G.newAch.length ? 30 : 0) + (G.broke ? 92 : (showDouble ? 56 : 0) + 112);
   const y0 = Math.max(10, H - sh - 8);
   g.fillStyle = 'rgba(0,10,30,0.45)'; g.fillRect(0, 0, innerWidth, innerHeight);
   card(x, y0, w, sh, 22);
@@ -541,6 +552,8 @@ function drawOver() {
     T(b, cx, cy + 9, 13, 800, M.text, 'center');
   });
   y += 88;
+  T(`이번 판 수수료 ${won(G.fees)}원 · 슬리피지 ${won(G.slip)}원${G.bossSlain ? ' · ☠ 보스 처치' : ''}`, L, y - 2, 12, 700, '#d97a00');
+  y += 14;
   drawRankCard(L, y, IW, G.money);
   y += 64;
   drawCurve(L, y, IW, ch, C.curve);

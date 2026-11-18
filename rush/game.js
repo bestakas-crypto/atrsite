@@ -5,7 +5,12 @@
 const ROUND = 60;            // 한 판 60초 고정 (자산이 늘어도 길어지지 않음)
 const TICK = 0.1;            // 시세는 0.1초마다 움직임
 const HIST = 150;            // 화면에 보이는 15초
-const FEE = 0.0001;          // 수수료: 계약금액의 0.01%
+// 거래 비용 (플레이테스트 후 여기서만 조정)
+const COST = {
+  fee: 0.001,            // 수수료: 체결 금액(계약금액)의 0.1%, 진입·추가·해제·청산 매번
+  slipTicks: [1, 2],     // 시장가 슬리피지: 1~2틱 불리하게 체결
+  tickSize: 0.05,        // 지수 1틱 크기
+};
 const START_MONEY = 1000000; // 처음 자금 100만 원 (판이 끝나도 이어짐)
 const MIN_MONEY = 100000;    // 최소 증거금: 이 아래로 떨어지면 깡통 = 게임 오버
 const OPEN = 350;            // 시작 지수
@@ -14,6 +19,43 @@ const CB_DROP = -0.04;       // 시가 대비 -4%면 서킷브레이커
 const CB_HALT = 5;           // 5초 매매 정지
 const INDEX = '한빛200';
 const LEVS = [1, 5, 10, 20, 50, 100];
+// ---------- 금리 (느린 변수: 추세 방향이 가격에 배경 흐름을 만든다) ----------
+const RATE = {
+  start: 5.0,            // 런 시작 금리(%)
+  min: 3, max: 7,        // 움직이는 범위(%)
+  noise: 0.00015,        // 0.1초마다 금리 속도에 더해지는 흔들림(%p)
+  damp: 0.985,           // 속도 감쇠 (클수록 추세가 오래 감)
+  newsJump: [0.15, 0.3], // 금리 뉴스 한 번에 점프(%p) — 긴급은 1.5배
+  newsPush: 0.002,       // 점프 뒤 같은 방향으로 이어지는 속도(%p/0.1초)
+  trendSecs: 8,          // 추세 판정 구간: 최근 8초 변화
+  flat: 0.03,            // 8초 변화가 이보다 작으면 횡보(%p)
+  bias: 0.00004,         // 추세가 만드는 가격 흐름(0.1초당, 약 0.04%/초) — 뉴스보다 약함
+};
+// 금리 관련 뉴스인지, 어느 쪽인지 (+1 인상, -1 인하)
+function rateNewsDir(text) {
+  if (!/금리|긴축|완화|유동성|양적완화/.test(text)) return 0;
+  if (/인상|긴축|회수/.test(text)) return 1;
+  if (/인하|완화|공급|양적완화/.test(text)) return -1;
+  return 0;
+}
+function rateTick() {
+  G.rateVel = G.rateVel * RATE.damp + randn() * RATE.noise;
+  G.rate = Math.max(RATE.min, Math.min(RATE.max, G.rate + G.rateVel));
+  if ((G.rate <= RATE.min && G.rateVel < 0) || (G.rate >= RATE.max && G.rateVel > 0)) G.rateVel *= -0.5;
+  G.rateHist.push(G.rate);
+  if (G.rateHist.length > RATE.trendSecs / TICK) G.rateHist.shift();
+}
+// 추세: +1 상승 중, -1 하락 중, 0 횡보 (금리 수준이 아니라 최근 변화 방향)
+function rateTrend() {
+  const d = G.rate - G.rateHist[0];
+  return Math.abs(d) < RATE.flat ? 0 : Math.sign(d);
+}
+function rateJump(dir, big) {
+  const j = rand(RATE.newsJump[0], RATE.newsJump[1]) * (big ? 1.5 : 1);
+  G.rate = Math.max(RATE.min, Math.min(RATE.max, G.rate + dir * j));
+  G.rateVel = dir * RATE.newsPush;
+}
+
 // ---------- 보스 뉴스 (희귀·치명: 보유 포지션 반대로 '즉시 충격 + 지속 출혈') ----------
 const BOSS = {
   chance: 0.13,          // 라운드당 기본 등장 확률
@@ -168,7 +210,7 @@ const SAVE_KEY = 'futures-career-v1';
 function freshRun(c) {
   c.money = START_MONEY; c.curve = [START_MONEY]; c.rounds = 0; c.streak = 0; c.runRank = 0; c.runBest = START_MONEY;
   c.runMile = 0; c.runPeak = 1; // 자본금 2^k배 축하 기록, 이번 런 최고 배수
-  c.bossLast = -99; c.mileRound = -99; // 보스가 마지막으로 나온 라운드, 마일스톤을 달성한 라운드
+  c.bossLast = -99; c.mileRound = -99; c.rate = RATE.start; // 보스가 마지막으로 나온 라운드, 마일스톤을 달성한 라운드
   return c;
 }
 let C = freshRun({ best: START_MONEY, bestDay: 0, ach: {}, runs: 1, lastLev: 5 });
@@ -401,7 +443,7 @@ const sfx = {
 // ---------- 한 판 ----------
 function newRound(lev) {
   G = {
-    lev, cap: stackCap(C.money), ctl: [], t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
+    lev, cap: stackCap(C.money), ctl: [], rate: C.rate || RATE.start, rateVel: 0, rateHist: [], fees: 0, slip: 0, bossSlain: false, t: 0, acc: 0, price: OPEN, hist: [], trend: 0, segs: [], nextNews: 4, nextShift: 2, followUps: [],
     money: C.money, startMoney: C.money, pos: null, combo: 0, bestCombo: 0, trades: 0, wins: 0, liqs: 0,
     haltUntil: 0, cbDone: false, broke: false,
     news: null, flash: null, shake: 0, parts: [], floats: [], crack: null, pulse: 0, lastSec: ROUND + 1,
@@ -423,7 +465,9 @@ function simTick() {
   if (G.boss && !seg) trend = G.boss.dir * BOSS.drift + G.trend * 0.3; // 지속 출혈
   const vol = 0.0003 + 0.0001 * Math.min(1, G.t / ROUND);
   const pull = G.boss ? 0 : -0.0015 * (G.price / OPEN - 1); // 시가에서 멀어질수록 되돌아오는 힘 (보스 중엔 없음)
-  G.price = Math.max(50, G.price * (1 + trend + pull + vol * randn()));
+  rateTick();
+  const bias = G.boss ? 0 : -rateTrend() * RATE.bias; // 금리 상승 추세 → 아래로, 하락 추세 → 위로
+  G.price = Math.max(50, G.price * (1 + trend + pull + bias + vol * randn()));
   G.hist.push(G.price);
   if (G.hist.length > HIST) G.hist.shift();
   G.trend *= 0.97;
@@ -435,7 +479,7 @@ function simTick() {
   if (state !== 'play') return;
   if (checkMarginCall()) return;
   checkMilestone();
-  if (G.bossAt != null && !G.boss && G.pos && !halted() && G.t >= G.bossAt && G.t < ROUND - BOSS.lastCall) fireBoss();
+  if (G.bossAt != null && !G.bossSlain && !G.boss && G.pos && !halted() && G.t >= G.bossAt && G.t < ROUND - BOSS.lastCall) fireBoss();
   // 단위별 강제청산: 청산가에 닿은 단위만
   if (G.pos) for (const u of G.pos.units.slice()) if (G.pos && unitPnl(u) <= -LIQ * u.margin) liquidateUnit(u);
   if (state !== 'play') return;
@@ -453,6 +497,7 @@ function simTick() {
 
 function showNews(text, kind, dir = 0) {
   if (G.boss && kind !== 'boss') return; // 보스 중엔 일반 뉴스 표시 안 함
+  if (kind === 'news' || kind === 'bomb' || kind === 'boss') { const rd = rateNewsDir(text); if (rd) rateJump(rd, kind !== 'news'); }
   G.news = { text, kind, dir, life: kind === 'boss' ? 1e9 : 8, age: 0 }; // 최소 8초 또렷하게, 보스는 판 끝까지
   if (state !== 'play') return;
   if (kind === 'bomb') { sfx.siren(); G.flash = { color: ALERT, life: 0.4 }; G.shake = 8; }
@@ -505,21 +550,34 @@ function toast(text, color, size = 18) {
   floatText(text, m.x, m.y, color, size);
 }
 
+// 시장가 체결가: 매수는 조금 비싸게, 매도는 조금 싸게 (side: +1 사는 쪽, -1 파는 쪽)
+function fillPrice(side) {
+  const ticks = Math.round(rand(COST.slipTicks[0], COST.slipTicks[1]));
+  return G.price + side * ticks * COST.tickSize;
+}
 function addUnit(side) {
   const base = G.pos ? G.pos.base : G.money; // 단위 크기 = 첫 진입 때 자산
-  const notional = base * G.lev, fee = notional * FEE;
+  const notional = base * G.lev, fee = notional * COST.fee;
+  const px = fillPrice(side);
   G.money -= fee;
+  G.fees += fee;
+  G.slip += notional * Math.abs(px / G.price - 1);
+  G.lastFee = fee;
   if (!G.pos) {
     const contra = G.news && G.news.kind === 'rumor' && G.news.dir === -side; // 소문 반대로 진입
     G.pos = { dir: side, base, units: [], maxD: 0, contra, net: 0 };
   }
-  G.pos.units.push({ entry: G.price, notional, margin: base, fee });
+  G.pos.units.push({ entry: px, notional, margin: base, fee });
 }
 
 // 단위 하나 정리: 손익 실현, 스택에서 빼기
 function releaseUnit(u) {
-  const pnl = unitPnl(u), exitFee = (u.notional + pnl) * FEE;
+  const px = fillPrice(-G.pos.dir); // 롱 정리는 파는 쪽, 숏 정리는 사는 쪽
+  const pnl = u.notional * (px / u.entry - 1) * G.pos.dir, exitFee = Math.max(0, u.notional + pnl) * COST.fee;
   G.money += pnl - exitFee;
+  G.fees += exitFee;
+  G.slip += u.notional * Math.abs(px / G.price - 1);
+  G.lastFee = exitFee;
   const net = pnl - exitFee - u.fee;
   G.pos.units = G.pos.units.filter(x => x !== u);
   G.pos.net += net;
@@ -532,18 +590,19 @@ function trade(side) {
   if (!G.pos) {
     addUnit(side);
     side > 0 ? sfx.long() : sfx.short();
-    toast(`${sideName(side)} 진입!`, side > 0 ? UP : DOWN);
+    toast(`${sideName(side)} 진입! · 수수료 ${won(G.lastFee)}`, side > 0 ? UP : DOWN, 16);
+    checkBossSlain();
   } else if (G.pos.dir === side) {
     if (posUnits() >= G.cap) { tone(160, 0.1, 'square', 0.05); toast(`이번 판 최대 ${G.cap}단`, '#aab4c8', 16); return; }
     addUnit(side);
     side > 0 ? sfx.long() : sfx.short();
-    toast(`${sideName(side)} 추가! x${posUnits()}`, side > 0 ? UP : DOWN);
+    toast(`${sideName(side)} 추가! x${posUnits()} · 수수료 ${won(G.lastFee)}`, side > 0 ? UP : DOWN, 16);
   } else {
     // 반대 버튼: 마지막에 쌓은 단위부터 1단위 해제
     const dir = G.pos.dir, net = releaseUnit(G.pos.units[G.pos.units.length - 1]);
     if (posUnits()) {
       tone(net >= 0 ? 700 : 260, 0.08, 'triangle', 0.05);
-      toast(`${sideName(dir)} 1단위 해제 ${sign(net)} · 남은 x${posUnits()}`, net >= 0 ? UP : DOWN, 16);
+      toast(`${sideName(dir)} 1단위 해제 ${sign(net)} · 남은 x${posUnits()} · 수수료 ${won(G.lastFee)}`, net >= 0 ? UP : DOWN, 15);
       checkBroke();
     } else closeStack();
   }
@@ -694,10 +753,11 @@ function floatText(text, x, y, color, size) {
   G.floats.push({ text, x, y, color, size, life: 1.2 });
 }
 // 손익·진입 문구 자리: 차트 가운데 (가격 꼬리표와 떨어진 곳)
-function zoneTop() { return Math.max(H * 0.75, 340); }
+function zoneTop() { return Math.max(H * 0.765, 352); }
+function rateBarY() { return chartBox().y1 + 24; } // 차트 시간 눈금 바로 아래
 function celebBox() { return { y: 38, h: 76 }; } // 차트·뉴스·버튼을 피해 자산 숫자 자리 위에
 function msgPoint() {
-  return { x: ox + W / 2, y: zoneTop() - 16 };
+  return { x: ox + W / 2, y: zoneTop() - 9 };
 }
 
 // ---------- 화면 배치 ----------
@@ -792,6 +852,21 @@ function planBoss() {
   if (C.mileRound === C.rounds) p *= BOSS.wMilestone; // 직전 라운드에 마일스톤
   if (C.streak >= 3) p *= BOSS.wStreak;
   if (Math.random() < p) G.bossAt = rand(BOSS.window[0], BOSS.window[1]);
+}
+
+// 보스 방향 포지션을 잡는 순간 보스 종료 (플랫만으론 안 됨)
+function checkBossSlain() {
+  if (!G.boss || !G.pos || G.pos.dir !== G.boss.dir) return;
+  G.boss = null;
+  G.bossSlain = true;
+  G.bossAt = null;
+  G.news = null;
+  G.nextNews = G.t + 3;
+  G.floats = [];
+  const m = msgPoint();
+  floatText('☠ 보스 처치!', m.x, m.y, GOLD, 22);
+  G.flash = { color: GOLD, life: 0.4 };
+  [0, 7, 12, 19].forEach((st, i) => tone(523 * Math.pow(2, st / 12), 0.16, 'triangle', 0.07, null, i * 0.08));
 }
 
 function fireBoss() {
@@ -909,6 +984,7 @@ function finishRound() {
   const profit = G.money - G.startMoney, rate = profit / G.startMoney;
   C.rounds += 1;
   C.money = G.money;
+  C.rate = G.rate;
   C.curve.push(G.money);
   if (C.curve.length > 300) C.curve.splice(1, C.curve.length - 300);
   C.streak = profit > 0 ? C.streak + 1 : 0;
@@ -967,7 +1043,7 @@ function draw() {
   if (state !== 'menu' && state !== 'ach') drawPanels();
   drawChart();
   drawParts(); // 동전은 잔액 숫자 뒤로
-  if (state === 'play' || state === 'over' || state === 'margin') { drawTop(); drawZones(); drawNews(); drawCtl(); }
+  if (state === 'play' || state === 'over' || state === 'margin') { drawTop(); drawZones(); drawNews(); drawCtl(); drawRateBar(); }
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
   drawBossFx();
@@ -1702,7 +1778,7 @@ function drawOver() {
   const profit = G.money - G.startMoney, rate = profit / G.startMoney;
   const showDouble = profit > 0 && !G.doubled && !G.broke;
   const ch = H < 720 ? 90 : 120;
-  const ph = 300 + ch + (G.newAch.length ? 26 : 0) + (showDouble ? 60 : 0) + 104;
+  const ph = 318 + ch + (G.newAch.length ? 26 : 0) + (showDouble ? 60 : 0) + 104;
   const py = Math.max(12, (H - ph) / 2);
   g.fillStyle = 'rgba(5,6,24,0.72)';
   g.fillRect(0, 0, innerWidth, innerHeight);
@@ -1729,6 +1805,9 @@ function drawOver() {
   g.fillStyle = 'rgba(255,255,255,0.65)';
   g.font = font(12, 500);
   g.fillText(`${G.lev}배 · 매매 ${G.trades} · 수익 ${G.wins} · 콤보 x${G.bestCombo} · 청산 ${G.liqs} · 연승 ${C.streak}`, cx, y);
+  y += 18;
+  g.fillStyle = ORANGE;
+  g.fillText(`이번 판 수수료 ${won(G.fees)}원 · 슬리피지 ${won(G.slip)}원${G.bossSlain ? ' · ☠ 보스 처치' : ''}`, cx, y);
   y += 18;
 
   drawRankCard(px + 18, y, pw - 36, G.money);
@@ -1810,6 +1889,32 @@ function drawRankUp() {
 }
 
 // ---------- 자본금 배수 축하 배너 (플레이를 막지 않음, 3초) ----------
+// ---------- 금리 바 (네온) ----------
+function rateLabels() {
+  const tr = rateTrend();
+  return {
+    rate: `기준금리 ${G.rate.toFixed(2)}%`,
+    trend: tr > 0 ? '▲ 상승 중' : tr < 0 ? '▼ 하락 중' : '― 횡보',
+    flow: tr > 0 ? '숏 우세' : tr < 0 ? '롱 우세' : '중립',
+    tr,
+  };
+}
+function drawRateBar() {
+  const y = rateBarY(), x = ox + 16, w = W - 32, h = 22, L = rateLabels();
+  g.save();
+  g.fillStyle = 'rgba(10,12,32,0.7)'; roundRect(x, y, w, h, 11); g.fill();
+  g.strokeStyle = 'rgba(255,200,90,0.25)'; g.lineWidth = 1; roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 11); g.stroke();
+  g.font = font(12, 700); g.textAlign = 'left';
+  g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillText(L.rate, x + 12, y + 15);
+  const rw = g.measureText(L.rate).width;
+  g.fillStyle = L.tr ? ORANGE : 'rgba(255,200,120,0.6)'; g.font = font(12, 800);
+  g.fillText(L.trend, x + 22 + rw, y + 15);
+  g.textAlign = 'right';
+  g.fillStyle = L.tr > 0 ? DOWN : L.tr < 0 ? UP : '#9aa3b5';
+  g.fillText(L.flow, x + w - 12, y + 15);
+  g.restore();
+}
+
 function drawCelebrate() {
   for (const p of G.sparks) {
     g.save();
