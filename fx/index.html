@@ -8,9 +8,66 @@
   html, body { margin: 0; height: 100%; background: #070a14; overflow: hidden; touch-action: none;
     -webkit-user-select: none; user-select: none; }
   canvas { display: block; }
+  /* 인트로 (로딩 겸용): 테마와 상관없이 흰 바탕 */
+  #intro { position: fixed; inset: 0; z-index: 10; background: #fff; display: flex; align-items: center;
+    justify-content: center; transition: opacity .3s; font-family: -apple-system, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif; }
+  #intro.out { opacity: 0; }
+  #intro .sc { position: absolute; text-align: center; opacity: 0; }
+  #studio { animation: studio 1.2s ease forwards; color: #2b2f36; }
+  #studio svg { display: block; margin: 0 auto 10px; }
+  #studio b { font-size: 22px; font-weight: 800; letter-spacing: .12em; animation: track 1.2s ease forwards; }
+  #title { animation: title .6s ease 1.25s forwards; }
+  #title b { display: block; font-size: 44px; font-weight: 900; color: #000; letter-spacing: .02em; }
+  #title span { display: block; margin-top: 8px; font-size: 14px; color: #6b7280; font-weight: 600; }
+  @keyframes studio { 0% { opacity: 0 } 40% { opacity: 1 } 75% { opacity: 1 } 100% { opacity: 0 } }
+  @keyframes track { from { letter-spacing: .12em } to { letter-spacing: .3em } }
+  @keyframes title { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: none } }
 </style>
 </head>
 <body>
+<div id="intro">
+  <div class="sc" id="studio">
+    <svg width="30" height="28" viewBox="0 0 30 28" aria-hidden="true">
+      <line x1="9" y1="2" x2="9" y2="24" stroke="#e5383b" stroke-width="2"/><rect x="5" y="7" width="8" height="13" rx="1" fill="#e5383b"/>
+      <line x1="21" y1="4" x2="21" y2="26" stroke="#2563eb" stroke-width="2"/><rect x="17" y="9" width="8" height="12" rx="1" fill="#2563eb"/>
+    </svg>
+    <b>KUNOH STUDIO</b>
+  </div>
+  <div class="sc" id="title"><b>FXラッシュ</b><span>USD/JPY 60秒トレード</span></div>
+</div>
+<script>
+  // 인트로: 약 2.8초 뒤(그리고 파일을 다 받은 뒤) 로비로, 탭·키 입력이면 즉시 넘김
+  (function () {
+    var el = document.getElementById('intro'), done = false, timeUp = false, loaded = false;
+    function close(now) {
+      if (done) return; done = true;
+      if (now) { el.remove(); return; }
+      el.className = 'out'; setTimeout(function () { el.remove(); }, 320);
+    }
+    function tryAuto() { if (timeUp && loaded) close(false); }
+    el.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); close(true); });
+    addEventListener('keydown', function (e) { if (!done) { e.stopImmediatePropagation(); close(true); } }, true);
+    addEventListener('load', function () { loaded = true; tryAuto(); });
+    setTimeout(function () { timeUp = true; tryAuto(); }, 2800);
+    // 타이틀 등장 효과음: 막히면 조용히 넘어감 (기다리지 않음)
+    setTimeout(function () {
+      if (done) return;
+      try {
+        var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+        var ac = new A();
+        if (ac.state !== 'running') { var r = ac.resume(); if (r && r.catch) r.catch(function () {}); }
+        [[880, 0], [1318.5, 0.08]].forEach(function (n) {
+          var t = ac.currentTime + n[1], o = ac.createOscillator(), gn = ac.createGain();
+          o.type = 'sine'; o.frequency.setValueAtTime(n[0], t);
+          gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(0.12, t + 0.015);
+          gn.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+          o.connect(gn).connect(ac.destination); o.start(t); o.stop(t + 0.65);
+        });
+        setTimeout(function () { try { ac.close(); } catch (e) {} }, 1000);
+      } catch (e) {}
+    }, 1250);
+  })();
+</script>
 <canvas id="c"></canvas>
 <script src="content.js?v=2"></script>
 <script src="game.js?v=7"></script>
