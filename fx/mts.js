@@ -35,7 +35,7 @@ function buildBg() {}
 const mtsWord = t => t.replace(/ロング/g, '買い').replace(/ショート/g, '売り');
 function ctlRects() {
   const R = ox + W - 16;
-  return [{ act: 'flat', label: '全決済', x: R - 124, y: 14, w: 58, h: 26 }, { act: 'stop', label: '取引中止', x: R - 60, y: 14, w: 58, h: 26 }];
+  return [{ act: 'flat', label: '全決済', x: R - 124, y: 6, w: 58, h: 26 }, { act: 'stop', label: '取引中止', x: R - 60, y: 6, w: 58, h: 26 }];
 }
 function drawCtl() {
   if (state !== 'play') return;
@@ -43,10 +43,11 @@ function drawCtl() {
   for (const c of G.ctl) {
     const on = ctlEnabled(c.act);
     g.save();
-    g.globalAlpha = on ? 1 : 0.35;
-    g.strokeStyle = M.line; g.lineWidth = 1;
+    g.globalAlpha = on ? 1 : 0.4;
+    g.fillStyle = '#fff'; roundRect(c.x, c.y, c.w, c.h, 7); g.fill();
+    g.strokeStyle = '#aeb5bf'; g.lineWidth = 1.2;
     roundRect(c.x + 0.5, c.y + 0.5, c.w - 1, c.h - 1, 7); g.stroke();
-    T(c.label, c.x + c.w / 2, c.y + 17, 11, 700, M.sub, 'center');
+    T(c.label, c.x + c.w / 2, c.y + 17, 12, 800, M.text, 'center'); // 작지만 읽히게 (진한 글자)
     g.restore();
   }
 }
@@ -61,8 +62,38 @@ function drawRateBar() {
   const fav = RATE_CFG.biasSign * L.tr;
   T(L.flow, x + w - 14, y + 16, 12, 800, fav > 0 ? M.red : fav < 0 ? M.blue : M.faint, 'right');
 }
-function celebBox() { return { y: 112, h: 104 }; } // 잔고 카드 자리 위에 (차트·뉴스·버튼은 안 가림)
-function drawTicker() {}
+function celebBox() { return { y: 60, h: 54 }; } // 잔고 카드 자리 위에 (차트·뉴스·버튼은 안 가림)
+// 하단 티커 (밝은 띠, 네온과 같은 규칙: 플레이 중엔 멈춤)
+function drawTicker() {
+  const y = H - 22, now = performance.now() / 1000;
+  const live = state !== 'play';
+  if (live && now > tickerNext) { tickerNext = now + 1.5; const t = pick(TICKERS); t.c = Math.max(-3, Math.min(3, t.c + rand(-0.2, 0.2))); }
+  if (live) tickerX -= 0.6;
+  g.save();
+  g.fillStyle = '#ffffff'; g.fillRect(-30, y, innerWidth + 60, 52);
+  g.fillStyle = M.line; g.fillRect(-30, y, innerWidth + 60, 1);
+  g.font = font(11, 700); g.textAlign = 'left';
+  const idx = G ? G.price / OPEN - 1 : 0;
+  const items = [{ n: INDEX, txt: (G ? G.price : OPEN).toFixed(2), c: idx * 100 }]
+    .concat(TICKERS.map(t => ({ n: t.n, txt: (t.p * (1 + t.c / 100)).toLocaleString('ja-JP', { minimumFractionDigits: t.d, maximumFractionDigits: t.d }), c: t.c })));
+  let total = 0;
+  const parts = items.map(it => {
+    const a = `${it.n} ${it.txt}`, bb = ` ${it.c >= 0 ? '▲' : '▼'}${Math.abs(it.c).toFixed(2)}%`;
+    const wa = g.measureText(a).width, wb = g.measureText(bb).width;
+    total += wa + wb + 28;
+    return { a, bb, wa, wb, c: it.c };
+  });
+  tickerX %= total;
+  for (let base = tickerX; base < innerWidth; base += total) {
+    let x = base;
+    for (const q of parts) {
+      g.fillStyle = M.sub; g.fillText(q.a, x, y + 15);
+      g.fillStyle = q.c >= 0 ? M.red : M.blue; g.fillText(q.bb, x + q.wa, y + 15);
+      x += q.wa + q.wb + 28;
+    }
+  }
+  g.restore();
+}
 function drawParts() {}
 function drawCrack() {}
 function drawConfetti() {
@@ -75,15 +106,13 @@ function drawConfetti() {
 }
 
 // ---------- 배치 ----------
-const CT = 292; // 차트 카드 위쪽 (그 위 224~284는 뉴스 칸)
+const CT = 164; // 차트 카드 위쪽 (헤더 0~56, 잔고 60~112, 뉴스 118~158)
 function chartBox() {
-  const bot = Math.max(360, H * 0.68);
-  return { x0: ox + 24, x1: ox + W - 86, y0: CT + 30, y1: bot - 34 };
+  return { x0: ox + 24, x1: ox + W - 86, y0: CT + 24, y1: Math.max(CT + 184, H - 182) }; // 화면 세로의 절반 이상
 }
-// 체결·손익 알림은 차트 아래 '보유 포지션' 줄 위에
-function zoneTop() { return chartBox().y1 + 126; }
-function rateBarY() { return chartBox().y1 + 42; } // 차트 카드 바로 아래
-function msgPoint() { return { x: ox + W / 2, y: chartBox().y1 + 94 + 7 }; }
+function rateBarY() { return chartBox().y1 + 28; }          // 차트 카드 바로 아래 얇은 띠
+function zoneTop() { return chartBox().y1 + 58; }           // 그 아래 매수·매도 버튼
+function msgPoint() { return { x: ox + W / 2, y: rateBarY() + 17 }; } // 알림은 금리 바 자리 위 (잠깐 덮음)
 
 function draw() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -93,6 +122,7 @@ function draw() {
   if (state === 'play' || state === 'over' || state === 'margin') {
     drawTop(); drawPanels(); drawChart(); drawZones(); drawNews(); drawCtl(); drawRateBar();
   }
+  drawTicker();
   if (state === 'play' && halted()) drawHalt();
   drawDanger();
   drawBossFx();
@@ -116,90 +146,66 @@ function draw() {
 function drawTop() {
   const L = ox + 20, R = ox + W - 20;
   const chg = G.price / OPEN - 1, cc = chg >= 0 ? M.red : M.blue;
-  T(`${INDEX} ${INDEX_NAME}`, L, 34, 18, 800, M.text);
-  T(`架空レート・レバレッジ${G.lev}倍`, L, 54, 12, 600, M.sub);
-  // 현재가 · 등락 · 남은 시간 (한 줄)
-  g.font = font(32, 800);
+  // 헤더 1줄: 종목 (오른쪽엔 全決済·取引中止)
+  T(`${INDEX} ${INDEX_NAME}`, L, 24, 14, 800, M.text);
+  // 헤더 2줄: 현재가 · 등락 · 남은 시간
+  g.font = font(26, 800);
   const pw = g.measureText(pt(G.price)).width;
-  T(pt(G.price), L, 96, 32, 800, cc);
-  T(`${chg >= 0 ? '▲' : '▼'} ${Math.abs(G.price - OPEN).toFixed(2)}  ${pctText(chg)}`, L + pw + 10, 94, 14, 700, cc);
+  T(pt(G.price), L, 52, 26, 800, cc);
+  T(`${chg >= 0 ? '▲' : '▼'} ${Math.abs(G.price - OPEN).toFixed(2)}  ${pctText(chg)}`, L + pw + 8, 50, 13, 700, cc);
   const sec = Math.max(0, Math.ceil(ROUND - G.t)), urgent = sec <= 10;
-  chip(`⏱ 0:${String(sec).padStart(2, '0')}`, R, 95, urgent ? '#fff' : M.text, urgent ? M.red : '#e3e7ec', 'right', 15);
+  chip(`残り ${sec}秒`, R, 52, urgent ? '#fff' : M.text, urgent ? M.red : '#e3e7ec', 'right', 13);
 
-  // 잔고 카드: 평가금액 바로 옆에 손익 %
-  const y = 112, h = 104, u = unreal(), eq = G.money + u;
-  card(ox + 12, y, W - 24, h);
-  const rk = rankIdx(eq);
-  T('評価額', L, y + 26, 13, 600, M.sub);
-  chip(RANKS[rk].name, L + 58, y + 26, RANK_C[rk], RANK_C[rk] + '1f', 'left', 11);
+  // 잔고 띠: 평가액·손익 % | 평가손익, 아래 줄에 포지션
+  const y = 60, h = 52, u = unreal(), eq = G.money + u;
+  card(ox + 12, y, W - 24, h, 12);
   const rate = G.pos ? u / posMargin() : (G.money - G.startMoney) / G.startMoney;
   const rc = rate >= 0 ? M.red : M.blue;
+  T('評価額', L, y + 21, 11, 600, M.sub);
+  g.font = font(11, 600); const lw = g.measureText('評価額').width;
   const s = 1 + G.pulse * 0.08;
-  g.font = font(24, 800);
+  g.font = font(17, 800);
   const ew = g.measureText(`¥${won(eq)}`).width;
-  g.save(); g.translate(L, y + 60); g.scale(s, s);
-  T(`¥${won(eq)}`, 0, 0, 24, 800, M.text);
+  g.save(); g.translate(L + lw + 6, y + 22); g.scale(s, s);
+  T(`¥${won(eq)}`, 0, 0, 17, 800, M.text);
   g.restore();
-  chip(pctText(rate), L + ew + 8, y + 59, '#fff', rc, 'left', 14);
+  chip(pctText(rate), L + lw + ew + 12, y + 21, '#fff', rc, 'left', 11);
   if (G.pos) {
-    T('評価損益', R, y + 26, 13, 600, M.sub, 'right');
-    T(sign(u), R, y + 86, 14, 800, rc, 'right');
-    T(`確定残高 ¥${won(G.money)}`, L, y + 86, 12, 600, M.sub);
+    T(`評価損益 ${sign(u)}`, R, y + 21, 12, 800, rc, 'right');
+    const long = G.pos.dir > 0;
+    T(`${long ? '買い' : '売り'} x${posUnits()}/上限${G.cap}段・平均 ${avgEntry().toFixed(2)}`, L, y + 40, 11, 700, long ? M.red : M.blue);
+    T(`ロスカット ${liqPrice().toFixed(2)}`, R, y + 40, 11, 700, M.red, 'right');
   } else {
-    T('今回の収益率', R, y + 26, 13, 600, M.sub, 'right');
-    T('ノーポジション', L, y + 86, 12, 600, M.sub);
-    if (G.combo >= 2) T(`連続利益 ${G.combo}回`, R, y + 86, 13, 800, M.gold, 'right');
+    T(`ノーポジション・今回の上限${G.cap}段`, L, y + 40, 11, 600, M.sub);
+    if (G.combo >= 2) T(`連続利益 ${G.combo}回`, R, y + 40, 11, 800, M.gold, 'right');
+    else T(`${G.lev}倍`, R, y + 21, 12, 700, M.sub, 'right');
   }
   // 시간 막대
   const left = Math.max(0, 1 - G.t / ROUND);
-  g.fillStyle = M.soft; roundRect(ox + 24, y + h - 8, W - 48, 3, 1.5); g.fill();
-  g.fillStyle = urgent ? M.red : M.blue; roundRect(ox + 24, y + h - 8, (W - 48) * left, 3, 1.5); g.fill();
+  g.fillStyle = M.soft; roundRect(ox + 20, y + h - 6, W - 40, 3, 1.5); g.fill();
+  g.fillStyle = urgent ? M.red : M.blue; roundRect(ox + 20, y + h - 6, (W - 40) * left, 3, 1.5); g.fill();
 }
 
 // 차트 카드 + 보유 포지션 줄
 function drawPanels() {
   const b = chartBox();
-  card(ox + 12, CT, W - 24, b.y1 - CT + 34);
-  T('直近15秒', ox + 24, CT + 20, 12, 700, M.sub);
-  T(`始値 ${OPEN.toFixed(2)}`, ox + W - 24, CT + 20, 12, 600, M.sub, 'right');
-
-  // 포지션 줄
-  const py = b.y1 + 72, ph = 44;
-  card(ox + 12, py, W - 24, ph, 14);
-  if (G.floats.length) return; // 체결·손익 알림이 이 줄을 덮는 동안
-  if (G.pos) {
-    const long = G.pos.dir > 0, c = long ? M.red : M.blue;
-    const w = chip(`${long ? '買い' : '売り'} x${posUnits()} / 上限${G.cap}段`, ox + 24, py + 27, c, long ? M.redBg : M.blueBg, 'left', 12);
-    T(`平均 ${avgEntry().toFixed(2)}`, ox + 32 + w, py + 27, 13, 700, M.text);
-    T(`ロスカット ${liqPrice().toFixed(2)}`, ox + W - 24, py + 27, 13, 700, M.red, 'right');
-  } else {
-    T(`ノーポジション・今回の上限${G.cap}段`, ox + W / 2, py + 27, 13, 600, M.sub, 'center');
-  }
+  card(ox + 12, CT, W - 24, b.y1 - CT + 22, 14);
+  T('5秒足', ox + 24, CT + 16, 11, 800, M.sub);
+  T(`始値 ${OPEN.toFixed(2)}`, ox + W - 24, CT + 16, 11, 600, M.sub, 'right');
 }
 
 function drawGrid() {}
 
 function drawChart() {
   if (state === 'menu' || state === 'ach' || state === 'analysis') return;
-  const b = chartBox(), [lo, hi] = range(), n = G.hist.length;
-  const X = i => b.x0 + i / (HIST - 1) * (b.x1 - b.x0);
-  const col = '#2f3a4d'; // 차트선은 한 색 고정, 빨강·파랑은 손익에만
-  drawAxes(b, lo, hi, X);
+  const b = chartBox(), [lo, hi] = range();
+  drawAxes(b, lo, hi);
   if (OPEN > lo && OPEN < hi) {
     const y = yOf(OPEN, b, lo, hi);
     g.strokeStyle = M.faint; g.lineWidth = 1; g.setLineDash([2, 4]);
     g.beginPath(); g.moveTo(b.x0, y); g.lineTo(b.x1, y); g.stroke(); g.setLineDash([]);
   }
-  const grad = g.createLinearGradient(0, b.y0, 0, b.y1);
-  grad.addColorStop(0, 'rgba(47,58,77,0.12)'); grad.addColorStop(1, 'rgba(47,58,77,0)');
-  g.beginPath();
-  G.hist.forEach((v, i) => { const x = X(i + HIST - n), y = yOf(v, b, lo, hi); i ? g.lineTo(x, y) : g.moveTo(x, y); });
-  g.lineTo(b.x1, b.y1); g.lineTo(X(HIST - n), b.y1); g.closePath();
-  g.fillStyle = grad; g.fill();
-  g.strokeStyle = col; g.lineWidth = 2.2; g.lineJoin = 'round';
-  g.beginPath();
-  G.hist.forEach((v, i) => { const x = X(i + HIST - n), y = yOf(v, b, lo, hi); i ? g.lineTo(x, y) : g.moveTo(x, y); });
-  g.stroke();
+  drawCandles(b, lo, hi, M.red, M.blue, false);
 
   const tags = tagLayout(b, lo, hi);
   if (G.pos) {
@@ -219,10 +225,12 @@ function drawChart() {
     if (t.k === 'entry') axisTag(b, t.ty, `${G.pos.dir > 0 ? '買い' : '売り'}${posUnits() > 1 ? 'x' + posUnits() : ''} ${avgEntry().toFixed(2)}`, G.pos.dir > 0 ? M.red : M.blue, t.y);
     if (t.k === 'liq') axisTag(b, t.ty, `${t.edge ? (t.edge > 0 ? '▲' : '▼') : ''}LC ${liqPrice().toFixed(2)}`, M.red, t.edge ? null : t.y);
   }
-  const p0 = tags.find(t => t.k === 'price'), py = p0.y, pty = p0.ty;
-  g.fillStyle = col;
-  g.beginPath(); g.arc(b.x1, py, 4 + Math.sin(performance.now() / 150) * 1, 0, Math.PI * 2); g.fill();
+  // 현재가: 가로 점선 + 오른쪽 꼬리표
+  const p0 = tags.find(t => t.k === 'price'), py = p0.y, pty = p0.ty, col = '#2f3a4d';
+  g.strokeStyle = 'rgba(47,58,77,0.45)'; g.lineWidth = 1; g.setLineDash([2, 3]);
+  g.beginPath(); g.moveTo(b.x0, py); g.lineTo(b.x1, py); g.stroke(); g.setLineDash([]);
   if (Math.abs(pty - py) > 1) { g.strokeStyle = col; g.lineWidth = 1; g.beginPath(); g.moveTo(b.x1, py); g.lineTo(b.x1 + 6, pty); g.stroke(); }
+  g.fillStyle = col;
   roundRect(b.x1 + 6, pty - 12, 74, 24, 6); g.fill();
   T(pt(G.price), b.x1 + 43, pty + 5, 13, 800, '#fff', 'center');
 }
@@ -234,23 +242,23 @@ function axisTag(b, y, text, c, trueY = null) {
   T(text, b.x1 + 43, y + 4, 11, 700, c, 'center');
 }
 
-function drawAxes(b, lo, hi, X) {
-  const step = niceStep((hi - lo) / 7), busy = tagYs(b, lo, hi);
+function drawAxes(b, lo, hi) {
+  const step = niceStep((hi - lo) / 8), busy = tagYs(b, lo, hi);
   g.strokeStyle = M.soft; g.lineWidth = 1;
   for (let v = Math.ceil(lo / step) * step; v < hi; v += step) {
     const y = yOf(v, b, lo, hi);
     g.beginPath(); g.moveTo(b.x0, y); g.lineTo(b.x1, y); g.stroke();
     if (busy.some(t => Math.abs(t - y) < 15)) continue;
-    T(v.toFixed(step < 1 ? 1 : 0), b.x1 + 12, y + 4, 11, 500, M.faint);
+    T(v.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0), b.x1 + 12, y + 4, 11, 500, M.faint);
   }
-  [['-15秒', 0], ['-10秒', 50], ['-5秒', 100], ['現在', HIST - 1]].forEach(([label, i]) => {
-    T(label, Math.min(X(i), b.x1 - 10), b.y1 + 18, 11, 500, M.faint, 'center');
+  timeTicks(b).forEach(([label, x]) => {
+    T(label, Math.min(x, b.x1 - 12), b.y1 + 16, 11, 500, M.faint, 'center');
   });
 }
 
 // 주문 버튼: 매수(빨강) / 매도(파랑)
 function drawZones() {
-  const y0 = zoneTop(), h = Math.max(70, H - y0 - 20), w = (W - 36) / 2, off = halted();
+  const y0 = zoneTop(), h = Math.max(70, H - y0 - 30), w = (W - 36) / 2, off = halted(); // 맨 아래 티커 자리를 비움
   const zones = [{ x: ox + 12, c: M.red, side: 1, p: G.press.l }, { x: ox + 24 + w, c: M.blue, side: -1, p: G.press.r }].map(z => {
     const t = zoneText(z.side);
     return Object.assign(z, { label: mtsWord(t.label), sub: G.pos ? mtsWord(t.sub) : (z.side > 0 ? 'ドル買い・ロング' : 'ドル売り・ショート'), badge: t.badge });
@@ -276,7 +284,7 @@ function drawZones() {
 
 // 뉴스: 앱 푸시 알림처럼 차트 카드 위에
 function drawNews() {
-  const x = ox + 12, w = W - 24, h = 60, y0 = 224;
+  const x = ox + 12, w = W - 24, h = 40, y0 = 118;
   if (G.news && G.news.kind === 'boss') { drawBossBanner(ox + W / 2, y0 + h / 2, W - 16); return; }
   if (!G.news) {
     if (state !== 'play') return;
@@ -284,7 +292,7 @@ function drawNews() {
     g.fillStyle = '#f7f8fa'; roundRect(x, y0, w, h, 16); g.fill();
     g.strokeStyle = '#d1d6db'; g.lineWidth = 1.5; g.setLineDash([5, 6]);
     roundRect(x, y0, w, h, 16); g.stroke(); g.setLineDash([]);
-    T('ニュース待機中…', ox + W / 2, y0 + h / 2 + 5, 15, 700, M.faint, 'center');
+    T('ニュース待機中…', ox + W / 2, y0 + h / 2 + 5, 13, 700, M.faint, 'center');
     g.restore();
     return;
   }
@@ -310,7 +318,7 @@ function drawNews() {
     g.globalAlpha = 1;
   }
   const tw = newsTag(-w / 2 + 12, 0, tag, tc, tag === '速報' ? '#3d2e00' : '#fff');
-  const fs = fitFont(body, w - tw - 36, 17, 13, 800);
+  const fs = fitFont(body, w - tw - 36, 15, 11, 800);
   g.fillStyle = M.text; g.textAlign = 'left';
   g.fillText(body, -w / 2 + tw + 24, fs * 0.36);
   g.restore();
@@ -525,8 +533,8 @@ function drawAnaCard(x, y, w) {
   g.font = font(13, 800);
   chip(at, x + w - 14, y + 25, '#7a5400', M.goldBg, 'right', 13);
   T(allTimeLine(), x + 16, y + 46, 12, 600, M.sub);
-  g.font = font(13, 700);
-  wrapLines(diagnose(a), w - 32).slice(0, 2).forEach((t, i) => T(t, x + 16, y + 68 + i * 17, 13, 700, M.text));
+  const fw = fitWrap(diagnose(a), w - 32, 2, [13, 12, 11]);
+  fw.lines.forEach((t, i) => T(t, x + 16, y + 66 + i * (fw.size + 4), fw.size, 700, M.text));
   G.buttons.push({ x, y, w, h, act: 'ana' });
   return h;
 }
@@ -542,10 +550,10 @@ function drawAnalysis() {
   T(P.arch ? ARCH[P.arch].s : '3回プレイすると傾向が表示されます', ox + W / 2, y + 58, 12, 600, M.sub, 'center');
   y += 86;
   g.font = font(13, 700);
-  const dl = wrapLines(diagnose(a), w - 32).slice(0, 2);
-  card(x, y, w, 22 + dl.length * 18, 14, '#fff7e8');
-  dl.forEach((t, i) => T(t, x + 16, y + 26 + i * 18, 13, 700, '#7a4a00'));
-  y += 32 + dl.length * 18;
+  const fw = fitWrap(diagnose(a), w - 32, 3, [13, 12]), dl = fw.lines, lh = fw.size + 5;
+  card(x, y, w, 22 + dl.length * lh, 14, '#fff7e8');
+  dl.forEach((t, i) => T(t, x + 16, y + 26 + i * lh, fw.size, 700, '#7a4a00'));
+  y += 32 + dl.length * lh;
   T('傾向', x + 4, y + 4, 12, 800, M.sub);
   y += 10;
   const axes = a ? a.axes : [];

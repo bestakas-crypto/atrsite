@@ -12,13 +12,13 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<script src="content.js?v=1"></script>
-<script src="game.js?v=3"></script>
+<script src="content.js?v=2"></script>
+<script src="game.js?v=5"></script>
 <script>
   // 기본 디자인은 증권사 앱, 메뉴에서 네온으로 바꿀 수 있음
   var theme = 'mts';
   try { theme = localStorage.getItem('fxrush-theme') || 'mts'; } catch (e) {}
-  if (theme !== 'neon') document.write('<script src="mts.js?v=2"><\/script>');
+  if (theme !== 'neon') document.write('<script src="mts.js?v=3"><\/script>');
 </script>
 </body>
 </html>
