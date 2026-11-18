@@ -658,6 +658,7 @@ function drawTicker() {
   if (live && now > tickerNext) { tickerNext = now + 1.5; const t = pick(TICKERS); t.c = Math.max(-3, Math.min(3, t.c + rand(-0.2, 0.2))); }
   if (live) tickerX -= 0.6;
   g.save();
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); // 화면 흔들림에서 빼기: 고정 띠라 첫 종목 여백이 늘 12px
   g.fillStyle = 'rgba(6,8,28,0.8)';
   g.fillRect(-30, y, innerWidth + 60, 52);
   g.strokeStyle = 'rgba(63,240,255,0.3)'; g.lineWidth = 1;
