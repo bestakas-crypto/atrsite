@@ -452,8 +452,14 @@ function drawMenu() {
   g.beginPath(); [[7, 25], [14, 18], [19, 22], [27, 11]].forEach(([a, b], i) => i ? g.lineTo(L + a, iy + b) : g.moveTo(L + a, iy + b)); g.stroke();
   T('선물 러시', L + 44, iy + 24, 20, 800, M.text);
   const got = ACHS.filter(a => C.ach[a.id]).length;
-  const aw = chip(`🏆 업적 ${got}/${ACHS.length}`, x + w - 4, iy + 23, M.text, '#e3e7ec', 'right', 13);
+  const aw = chip(`🏆 ${got}/${ACHS.length}`, x + w - 4, iy + 23, M.text, '#e3e7ec', 'right', 13);
   G.buttons.push({ x: x + w - 4 - aw, y: iy, w: aw, h: 30, act: 'ach' });
+  // 디자인 전환·자본금 리셋: 헤더 오른쪽 (화면 높이와 상관없이 늘 보임)
+  const armed = resetArmed();
+  const rx = x + w - 10 - aw, rw = chip(armed ? '정말 리셋?' : '리셋', rx, iy + 23, armed ? '#fff' : M.sub, armed ? M.red : '#eef0f3', 'right', 12);
+  G.buttons.push({ x: rx - rw, y: iy, w: rw, h: 30, act: 'resetAsk' });
+  const tx = rx - rw - 6, tw = chip('네온', tx, iy + 23, M.blue, '#e8f1ff', 'right', 12);
+  G.buttons.push({ x: tx - tw, y: iy, w: tw, h: 30, act: 'theme' });
 
   // 내 자산 카드
   let y = 66;
@@ -504,10 +510,7 @@ function drawMenu() {
   y += 66;
   if (showAna) y += drawAnaCard(x, y, w) + 24; else y += 10;
   T(`최고 자산 ${kor(C.best)}원 · 한 판 최고 ${pctText(C.bestDay)}`, x + w / 2, y, 12, 600, M.sub, 'center');
-  T('디자인 바꾸기 (네온)', x + w / 2, y + 26, 12, 700, M.blue, 'center');
-  G.buttons.push({ x: x + w / 2 - 70, y: y + 10, w: 140, h: 24, act: 'theme' });
-  T(resetLabel(), x + w / 2, y + 52, 12, 700, resetArmed() ? M.red : M.faint, 'center');
-  G.buttons.push({ x: x + w / 2 - 90, y: y + 36, w: 180, h: 24, act: 'resetAsk' });
+  if (resetArmed()) T('한 번 더 누르면 100만 원으로 리셋 (전적·업적 유지)', x + w / 2, 72, 11, 700, M.red, 'center');
   drawNudge();
 }
 

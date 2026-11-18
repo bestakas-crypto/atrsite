@@ -1459,7 +1459,7 @@ function setDiff(k) { P.diff = k; saveProfile(); tone(k === 'easy' ? 660 : 880, 
 // 로비의 자본금 리셋: 한 번 누르면 3초 동안 확인 상태, 그 안에 한 번 더 누르면 리셋
 let resetArmAt = -1e9;
 function resetArmed() { return performance.now() - resetArmAt < 3000; }
-function resetLabel() { return resetArmed() ? '정말 리셋할까요? 한 번 더 누르면 100만 원부터' : '자본금 리셋 (전적·업적은 유지)'; }
+function resetLabel() { return resetArmed() ? '정말 리셋? 한 번 더 탭' : '자본금 리셋'; }
 function resetAsk() {
   if (resetArmed()) { resetArmAt = -1e9; restartCareer(); tone(330, 0.2, 'triangle', 0.06); return; }
   resetArmAt = performance.now();
@@ -2194,14 +2194,15 @@ function drawMenu() {
   g.fillStyle = GOLD;
   g.font = font(13, 600);
   g.fillText(`최고 자산 ${kor(C.best)}원 · 한 판 최고 ${pctText(C.bestDay)}`, cx, y);
-  g.fillStyle = CYAN;
+  // 디자인 전환·자본금 리셋: 화면 맨 위 구석 (화면 높이와 상관없이 늘 보임)
   g.font = font(12, 700);
-  g.fillText('디자인 바꾸기 (증권사 앱)', cx, y + 26);
-  G.buttons.push({ x: cx - 80, y: y + 10, w: 160, h: 24, act: 'theme' });
-  g.fillStyle = resetArmed() ? ALERT : 'rgba(255,255,255,0.4)';
-  g.font = font(12, 700);
-  g.fillText(resetLabel(), cx, y + 52);
-  G.buttons.push({ x: cx - 90, y: y + 36, w: 180, h: 24, act: 'resetAsk' });
+  g.textAlign = 'left'; g.fillStyle = CYAN;
+  g.fillText('디자인 바꾸기', ox + 14, 22);
+  G.buttons.push({ x: ox + 6, y: 4, w: g.measureText('디자인 바꾸기').width + 16, h: 28, act: 'theme' });
+  const rl = resetLabel(), rw = g.measureText(rl).width;
+  g.textAlign = 'right'; g.fillStyle = resetArmed() ? ALERT : 'rgba(255,255,255,0.5)';
+  g.fillText(rl, ox + W - 14, 22);
+  G.buttons.push({ x: ox + W - 22 - rw, y: 4, w: rw + 16, h: 28, act: 'resetAsk' });
   drawNudge();
 }
 
