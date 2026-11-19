@@ -359,6 +359,17 @@ function wrapLines(text, maxW) {
   if (cur) lines.push(cur);
   return lines;
 }
+// 정해진 줄 수 안에 들어가도록 글자 크기를 줄여 가며 줄바꿈
+function fitWrap(text, maxW, maxLines, sizes, weight = 700) {
+  for (const sz of sizes) {
+    g.font = font(sz, weight);
+    const lines = wrapLines(text, maxW);
+    if (lines.length <= maxLines) return { lines, size: sz };
+  }
+  const sz = sizes[sizes.length - 1];
+  g.font = font(sz, weight);
+  return { lines: wrapLines(text, maxW).slice(0, maxLines), size: sz };
+}
 
 // 로비 요약 카드 (네온)
 function drawAnaCard(x, y, w) {
@@ -370,8 +381,9 @@ function drawAnaCard(x, y, w) {
   g.fillText(archText(), x + w - 14, y + 23);
   g.textAlign = 'left'; g.fillStyle = 'rgba(255,255,255,0.75)'; g.font = font(12, 600);
   g.fillText(allTimeLine(), x + 14, y + 44);
-  g.fillStyle = '#fff'; g.font = font(13, 700);
-  wrapLines('💬 ' + diagnose(a), w - 28).slice(0, 2).forEach((t, i) => g.fillText(t, x + 14, y + 66 + i * 18));
+  const fw = fitWrap('💬 ' + diagnose(a), w - 28, 2, [13, 12, 11]);
+  g.fillStyle = '#fff'; g.font = font(fw.size, 700);
+  fw.lines.forEach((t, i) => g.fillText(t, x + 14, y + 66 + i * (fw.size + 4)));
   G.buttons.push({ x, y, w, h, act: 'ana' });
   return h;
 }
@@ -390,12 +402,12 @@ function drawAnalysis() {
   g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = font(12, 600);
   g.fillText(P.arch ? ARCH[P.arch].s : '3판부터 성향이 나와요', cx, y + 56);
   y += 84;
-  g.font = font(13, 700);
-  const dl = wrapLines('💬 ' + diagnose(a), w - 28).slice(0, 2);
-  glass(x, y, w, 22 + dl.length * 18, 14, 0.6, ORANGE);
-  g.textAlign = 'left'; g.fillStyle = '#fff';
-  dl.forEach((t, i) => g.fillText(t, x + 14, y + 25 + i * 18));
-  y += 32 + dl.length * 18;
+  const fw = fitWrap('💬 ' + diagnose(a), w - 28, 3, [13, 12]);
+  const dl = fw.lines, lh = fw.size + 5;
+  glass(x, y, w, 22 + dl.length * lh, 14, 0.6, ORANGE);
+  g.textAlign = 'left'; g.fillStyle = '#fff'; g.font = font(fw.size, 700);
+  dl.forEach((t, i) => g.fillText(t, x + 14, y + 25 + i * lh));
+  y += 32 + dl.length * lh;
   g.fillStyle = 'rgba(255,255,255,0.55)'; g.font = font(12, 800);
   g.fillText('성향', x + 4, y + 4);
   y += 12;
@@ -717,12 +729,14 @@ function glass(x, y, w, h, r = 16, a = 0.5, edge = CYAN) {
 const TICKERS = ['가온전자', '누리화학', '별빛금융', '한결바이오', '미르자동차', '다온건설', '새솔에너지', '푸른통신', '하늘항공', '바른제약']
   .map(n => ({ n, p: Math.round(rand(8, 120)) * 1000, c: rand(-3, 3) }));
 let tickerX = 0, tickerNext = 0;
+const TICKER_PAD = 12; // 첫 종목이 왼쪽 끝에 붙어 잘려 보이지 않게
 function drawTicker() {
   const y = H - 22, now = performance.now() / 1000;
-  const live = state !== 'play';
+  const live = state === 'menu'; // 로비에서만 흐름, 판 중·결과 화면 등은 정지(첫 종목부터 12px)
   if (live && now > tickerNext) { tickerNext = now + 1.5; const t = pick(TICKERS); t.c = Math.max(-9, Math.min(9, t.c + rand(-0.6, 0.6))); }
   if (live) tickerX -= 0.6;
   g.save();
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); // 화면 흔들림에서 빼기: 고정 띠라 첫 종목 여백이 늘 12px
   g.fillStyle = 'rgba(6,8,28,0.8)';
   g.fillRect(-30, y, innerWidth + 60, 52);
   g.strokeStyle = 'rgba(63,240,255,0.3)'; g.lineWidth = 1;
@@ -740,7 +754,7 @@ function drawTicker() {
     return { a, bb, wa, wb, c: it.c };
   });
   tickerX %= total;
-  for (let base = tickerX; base < innerWidth; base += total) {
+  for (let base = (live ? tickerX : 0) + TICKER_PAD; base < innerWidth; base += total) { // 정지 상태엔 첫 종목부터
     let x = base;
     for (const q of parts) {
       g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillText(q.a, x, y + 15);
@@ -827,14 +841,56 @@ function newRound(lev) {
     doubled: false, buttons: [], press: { l: 0, r: 0 },
     toasts: [], newAch: [], confetti: [], rankUp: null, recordDay: false, celeb: null, sparks: [], mc: null,
   };
-  // 화면을 채울 과거 시세 (시가에서 끝나도록 뒤에서부터)
+  // 화면을 채울 과거 시세 60초 (시가에서 끝나도록 뒤에서부터) → 지난 12개 봉
   let p = OPEN;
-  const pre = [];
-  for (let i = 0; i < HIST; i++) { pre.unshift(p); p *= 1 + 0.0008 * randn(); }
-  G.hist = pre;
+  const pre = [], n = CANDLE_SECS / TICK * (CANDLE_VIS - 1);
+  for (let i = 0; i < n; i++) { pre.unshift(p); p *= 1 + 0.0004 * randn(); }
+  G.hist = pre.slice(-HIST);
+  G.candles = [];
+  for (let k = 0; k < CANDLE_VIS - 1; k++) {
+    const seg = pre.slice(k * CANDLE_SECS / TICK, (k + 1) * CANDLE_SECS / TICK);
+    G.candles.push({ i: k - (CANDLE_VIS - 1), o: seg[0], h: Math.max(...seg), l: Math.min(...seg), c: seg[seg.length - 1] });
+  }
 }
 
 function halted() { return G.t < G.haltUntil; }
+
+// ---------- 5초봉 캔들 (60초 라운드에 12개) ----------
+const CANDLE_SECS = 5, CANDLE_VIS = 13; // 화면에 13개 = 지난 60초 + 진행 중인 봉
+function candleStep() {
+  const idx = Math.floor(G.t / CANDLE_SECS);
+  let c = G.candles[G.candles.length - 1];
+  if (!c || c.i !== idx) {
+    const o = c ? c.c : G.price;
+    c = { i: idx, o, h: Math.max(o, G.price), l: Math.min(o, G.price), c: G.price };
+    G.candles.push(c);
+    if (G.candles.length > 40) G.candles.shift();
+  } else {
+    c.h = Math.max(c.h, G.price); c.l = Math.min(c.l, G.price); c.c = G.price;
+  }
+}
+// 화면 x 위치: 슬롯 k(0~CANDLE_VIS-1)의 가운데
+function candleX(b, k) { return b.x0 + (b.x1 - b.x0) / CANDLE_VIS * (k + 0.5); }
+function visCandles() { return G.candles.slice(-CANDLE_VIS); }
+// 캔들 그리기 (두 테마 공통): 상승 = 빨강, 하락 = 파랑, 고가·저가 꼬리
+function drawCandles(b, lo, hi, upC, downC, glow) {
+  const vis = visCandles(), sw = (b.x1 - b.x0) / CANDLE_VIS, bw = Math.max(3, sw * 0.62);
+  vis.forEach((c, k) => {
+    const slot = CANDLE_VIS - vis.length + k, cx = candleX(b, slot), up = c.c >= c.o, col = up ? upC : downC;
+    const yo = yOf(c.o, b, lo, hi), yc = yOf(c.c, b, lo, hi), yh = yOf(c.h, b, lo, hi), yl = yOf(c.l, b, lo, hi);
+    g.save();
+    if (glow) { g.shadowColor = col; g.shadowBlur = k === vis.length - 1 ? 14 : 6; }
+    g.strokeStyle = col; g.lineWidth = 1.6;
+    g.beginPath(); g.moveTo(cx, yh); g.lineTo(cx, yl); g.stroke();
+    g.fillStyle = col;
+    g.fillRect(cx - bw / 2, Math.min(yo, yc), bw, Math.max(1.8, Math.abs(yc - yo)));
+    g.restore();
+  });
+}
+// 시간 눈금: 15초(3봉)마다
+function timeTicks(b) {
+  return [['-60초', 0], ['-45초', 3], ['-30초', 6], ['-15초', 9], ['현재', CANDLE_VIS - 1]].map(([t, k]) => [t, candleX(b, k)]);
+}
 
 function simTick() {
   const seg = G.segs.find(s => G.t >= s.from && G.t < s.until);
@@ -847,6 +903,7 @@ function simTick() {
   G.price = Math.max(50, G.price * (1 + trend + pull + bias + wsTrend() + vol * randn()));
   G.hist.push(G.price);
   if (G.hist.length > HIST) G.hist.shift();
+  candleStep();
   G.trend *= 0.97;
   if (G.t >= G.nextShift) { G.trend = randn() * 0.00015 * DN(); G.nextShift = G.t + rand(2, 4); }
   if (!G.boss && G.t >= G.nextNews && G.t < ROUND - 4) { fireNews(); G.nextNews = G.t + rand(6, 9); }
@@ -1141,27 +1198,28 @@ function floatText(text, x, y, color, size) {
   G.floats.push({ text, x, y, color, size, life: 1.2 });
 }
 // 손익·진입 문구 자리: 차트 가운데 (가격 꼬리표와 떨어진 곳)
-function zoneTop() { return Math.max(H * 0.765, 352); }
-function rateBarY() { return chartBox().y1 + 24; } // 차트 시간 눈금 바로 아래
-function celebBox() { return { y: 38, h: 76 }; } // 차트·뉴스·버튼을 피해 자산 숫자 자리 위에
+function zoneTop() { return chartBox().y1 + 96; }
+function rateBarY() { return chartBox().y1 + 70; } // 뉴스 칸 바로 아래
+function celebBox() { return { y: 4, h: 70 }; } // 차트·뉴스·버튼을 피해 자산 숫자 자리 위에
 function msgPoint() {
-  return { x: ox + W / 2, y: zoneTop() - 9 };
+  return { x: ox + W / 2, y: rateBarY() + 21 }; // 금리 바 자리 위 (뉴스·시간축은 안 가림)
 }
 
 // ---------- 화면 배치 ----------
 function chartBox() {
-  return { x0: ox + 16, x1: ox + W - 92, y0: 236, y1: Math.max(320, H * 0.66) };
+  return { x0: ox + 16, x1: ox + W - 92, y0: 92, y1: Math.max(260, H - 218) }; // 화면 세로의 절반 이상
 }
 function range() {
-  let lo = Math.min(...G.hist), hi = Math.max(...G.hist);
+  const vis = visCandles();
+  let lo = Math.min(G.price, ...vis.map(c => c.l)), hi = Math.max(G.price, ...vis.map(c => c.h));
   if (G.pos) {
-    // 진입가는 항상, 청산가는 6% 안쪽일 때 화면에 들어오게
+    // 진입가는 항상, 청산가는 가까워졌을 때(1.2% 안쪽)만 화면에 넣음 — 멀면 끝에 ▼LC 꼬리표 (캔들이 작아지지 않게)
     const ae = avgEntry();
     lo = Math.min(lo, ae); hi = Math.max(hi, ae);
     const lq = liqPrice();
-    if (Math.abs(lq / G.price - 1) < 0.06) { lo = Math.min(lo, lq); hi = Math.max(hi, lq); }
+    if (Math.abs(lq / G.price - 1) < 0.012) { lo = Math.min(lo, lq); hi = Math.max(hi, lq); }
   }
-  const pad = (hi - lo) * 0.15 || 1;
+  const pad = (hi - lo) * 0.12 || 0.5;
   return [lo - pad, hi + pad];
 }
 function yOf(v, b, lo, hi) { return b.y1 - (v - lo) / (hi - lo) * (b.y1 - b.y0); }
@@ -1297,7 +1355,7 @@ function drawBossFx() {
   g.restore();
 }
 // 보스 배너: 일반 뉴스보다 크고, 각진 검정·빨강 태그 (두 테마 공통)
-const BOSS_H = 78;
+const BOSS_H = 56;
 function drawBossBanner(cx, cy, w) {
   const n = G.news, { body } = newsParts(n), a = newsAnim(n), h = BOSS_H;
   const beat = 0.5 + 0.5 * Math.sin(n.age * 8);
@@ -1324,7 +1382,7 @@ function drawBossBanner(cx, cy, w) {
   g.fillStyle = '#000'; g.fillRect(-w / 2 + 16, -15, tw, 30);
   g.strokeStyle = '#ff2e2e'; g.lineWidth = 2; g.strokeRect(-w / 2 + 16, -15, tw, 30);
   g.fillStyle = '#ff3b3b'; g.textAlign = 'left'; g.fillText(tt, -w / 2 + 25, 6);
-  const fs = fitFont(body, w - tw - 44, 20, 13, 900);
+  const fs = fitFont(body, w - tw - 44, 17, 11, 900);
   g.fillStyle = '#fff'; g.shadowColor = '#ff2e2e'; g.shadowBlur = 10;
   g.fillText(body, -w / 2 + tw + 28, fs * 0.36);
   g.restore();
@@ -1516,9 +1574,9 @@ function draw() {
 
 // 상단 정보 카드와 차트 카드
 function drawPanels() {
-  glass(ox + 8, 6, W - 16, 146, 18, 0.5);
+  glass(ox + 8, 4, W - 16, 72, 16, 0.5);
   const b = chartBox();
-  glass(ox + 8, b.y0 - 14, W - 16, b.y1 - b.y0 + 40, 18, 0.42, RUMOR);
+  glass(ox + 8, b.y0 - 10, W - 16, b.y1 - b.y0 + 32, 16, 0.42, RUMOR);
 }
 
 function drawGrid() {
@@ -1532,90 +1590,55 @@ function drawGrid() {
 }
 
 function drawChart() {
-  const b = chartBox(), [lo, hi] = range(), n = G.hist.length;
-  const X = i => b.x0 + i / (HIST - 1) * (b.x1 - b.x0);
-  const col = CYAN; // 차트선은 한 색 고정
-
+  const b = chartBox(), [lo, hi] = range();
+  const lobby = state === 'menu' || state === 'ach' || state === 'analysis'; // 로비 뒤편: 흐리게, 꼬리표 없음
   g.save();
-  if (state !== 'play' && state !== 'over') g.globalAlpha = 0.15; // 메뉴에선 흐리게, 글자가 잘 보이도록
-  else drawAxes(b, lo, hi, X);
-
+  if (lobby) g.globalAlpha = 0.15;
+  else drawAxes(b, lo, hi);
   // 시가 기준선
-  if (state !== 'menu' && OPEN > lo && OPEN < hi) {
+  if (!lobby && OPEN > lo && OPEN < hi) {
     const y = yOf(OPEN, b, lo, hi);
     g.strokeStyle = 'rgba(255,255,255,0.18)';
     g.setLineDash([2, 6]);
     g.beginPath(); g.moveTo(b.x0, y); g.lineTo(b.x1, y); g.stroke();
     g.setLineDash([]);
   }
-
-  const grad = g.createLinearGradient(0, b.y0, 0, b.y1);
-  grad.addColorStop(0, col + '55');
-  grad.addColorStop(1, col + '00');
-  g.beginPath();
-  G.hist.forEach((v, i) => { const x = X(i + HIST - n), y = yOf(v, b, lo, hi); i ? g.lineTo(x, y) : g.moveTo(x, y); });
-  g.lineTo(b.x1, b.y1);
-  g.lineTo(X(HIST - n), b.y1);
-  g.closePath();
-  g.fillStyle = grad;
-  g.fill();
-
-  g.save();
-  g.shadowColor = col;
-  g.shadowBlur = 16;
-  g.strokeStyle = col;
-  g.lineWidth = 3;
-  g.lineJoin = 'round';
-  g.beginPath();
-  G.hist.forEach((v, i) => { const x = X(i + HIST - n), y = yOf(v, b, lo, hi); i ? g.lineTo(x, y) : g.moveTo(x, y); });
-  g.stroke();
+  drawCandles(b, lo, hi, UP, DOWN, true);
   g.restore();
 
-  g.restore(); // 메뉴용 흐림 끝
-
-  // 진입가·청산가 선 (글자는 오른쪽 축 꼬리표로)
   const tags = tagLayout(b, lo, hi);
   if (G.pos) {
     const c = G.pos.dir > 0 ? UP : DOWN;
     const y = yOf(avgEntry(), b, lo, hi);
-    g.setLineDash([6, 6]);
-    g.strokeStyle = c;
-    g.lineWidth = 1.5;
+    g.setLineDash([6, 6]); g.strokeStyle = c; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(b.x0, y); g.lineTo(b.x1, y); g.stroke();
     g.setLineDash([]);
     const lq = liqPrice();
     if (lq > lo && lq < hi) {
       const ly = yOf(lq, b, lo, hi);
-      g.strokeStyle = ALERT;
-      g.lineWidth = 1.5;
-      g.setLineDash([3, 4]);
+      g.strokeStyle = ALERT; g.lineWidth = 1.5; g.setLineDash([3, 4]);
       g.beginPath(); g.moveTo(b.x0, ly); g.lineTo(b.x1, ly); g.stroke();
       g.setLineDash([]);
     }
     liqDistance(b, lo, hi, ALERT, 'rgba(7,10,20,0.8)');
   }
-  const lobby = state === 'menu' || state === 'ach' || state === 'analysis'; // 로비 뒤편 차트엔 시가·진입·청산 꼬리표 없음
   for (const t of lobby ? [] : tags) {
-    if (t.k === 'open') axisTag(b, t.ty, `시가 ${OPEN.toFixed(1)}`, 'rgba(255,255,255,0.45)', t.y);
+    if (t.k === 'open') axisTag(b, t.ty, `시가 ${OPEN.toFixed(2)}`, 'rgba(255,255,255,0.45)', t.y);
     if (t.k === 'entry') axisTag(b, t.ty, `${sideName(G.pos.dir)}${posUnits() > 1 ? 'x' + posUnits() : ''} ${avgEntry().toFixed(1)}`, G.pos.dir > 0 ? UP : DOWN, t.y);
-    if (t.k === 'liq') axisTag(b, t.ty, `${t.edge ? (t.edge > 0 ? '▲' : '▼') : ''}청산 ${liqPrice().toFixed(1)}`, ALERT, t.edge ? null : t.y);
+    if (t.k === 'liq') axisTag(b, t.ty, `${t.edge ? (t.edge > 0 ? '▲' : '▼') : ''}LC ${liqPrice().toFixed(2)}`, ALERT, t.edge ? null : t.y);
   }
-
-  const pt0 = tags.find(t => t.k === 'price');
-  const py = pt0.y, pty = pt0.ty;
-  const r = 5 + Math.sin(performance.now() / 120) * 1.5;
+  // 현재가: 가로 점선 + 오른쪽 꼬리표
+  const pt0 = tags.find(t => t.k === 'price'), py = pt0.y, pty = pt0.ty, col = CYAN;
   g.save();
-  if (state !== 'play' && state !== 'over') g.globalAlpha = 0.15;
-  g.shadowColor = col; g.shadowBlur = 20;
-  g.fillStyle = '#fff';
-  g.beginPath(); g.arc(b.x1, py, r, 0, Math.PI * 2); g.fill();
-  g.shadowBlur = 0;
+  if (lobby) g.globalAlpha = 0.15;
+  g.strokeStyle = 'rgba(63,240,255,0.5)'; g.lineWidth = 1; g.setLineDash([2, 3]);
+  g.beginPath(); g.moveTo(b.x0, py); g.lineTo(b.x1, py); g.stroke(); g.setLineDash([]);
   if (Math.abs(pty - py) > 1) { g.strokeStyle = col; g.lineWidth = 1; g.beginPath(); g.moveTo(b.x1, py); g.lineTo(b.x1 + 6, pty); g.stroke(); }
+  g.shadowColor = col; g.shadowBlur = 12;
   g.fillStyle = col;
   roundRect(b.x1 + 6, pty - 13, 78, 26, 6); g.fill();
-  g.fillStyle = '#070a14';
-  g.font = font(13);
-  g.textAlign = 'center';
+  g.shadowBlur = 0;
+  g.fillStyle = '#070a14'; g.font = font(13); g.textAlign = 'center';
   g.fillText(pt(G.price), b.x1 + 45, pty + 5);
   g.restore();
 }
@@ -1645,7 +1668,7 @@ function liqDistance(b, lo, hi, color, bg) {
   const lq = liqPrice(), d = Math.abs(G.price / lq - 1) * 100;
   const inside = lq > lo && lq < hi;
   const y = inside ? yOf(lq, b, lo, hi) : lq < lo ? b.y1 - 4 : b.y0 + 4;
-  const text = `청산까지 ${d.toFixed(1)}%`;
+  const text = `로스컷까지 ${d.toFixed(1)}%`;
   g.font = font(11, 800);
   const w = g.measureText(text).width + 12;
   const ty = inside ? (lq < G.price ? y - 12 : y + 12) : (lq < lo ? y - 10 : y + 10);
@@ -1674,9 +1697,9 @@ function niceStep(x) {
 // 오른쪽 축 칸에 붙는 꼬리표들의 높이 (가격 눈금 숫자를 피하려고)
 function tagYs(b, lo, hi) { return tagLayout(b, lo, hi).map(t => t.ty); }
 
-function drawAxes(b, lo, hi, X) {
+function drawAxes(b, lo, hi) {
   g.font = font(11, 500);
-  // 가격 눈금: 6칸 정도, 꼬리표에 가려질 숫자는 건너뜀
+  // 가격 눈금: 꼬리표에 가려질 숫자는 건너뜀
   const step = niceStep((hi - lo) / 9);
   const busy = tagYs(b, lo, hi);
   g.strokeStyle = 'rgba(255,255,255,0.07)';
@@ -1689,20 +1712,18 @@ function drawAxes(b, lo, hi, X) {
     g.fillStyle = 'rgba(255,255,255,0.45)';
     g.fillText(v.toFixed(step < 1 ? 1 : 0), b.x1 + 12, y + 4);
   }
-  // 시간 눈금 (5초 = 50틱)
+  // 시간 눈금: 15초(3봉)마다
   g.textAlign = 'center';
-  [['-15초', 0], ['-10초', 50], ['-5초', 100], ['지금', HIST - 1]].forEach(([label, i]) => {
-    const x = X(i);
-    g.strokeStyle = 'rgba(255,255,255,0.07)';
+  timeTicks(b).forEach(([label, x]) => {
+    g.strokeStyle = 'rgba(255,255,255,0.05)';
     g.beginPath(); g.moveTo(x, b.y0); g.lineTo(x, b.y1); g.stroke();
     g.fillStyle = 'rgba(255,255,255,0.4)';
-    g.fillText(label, Math.min(x, b.x1 - 10), b.y1 + 16);
+    g.fillText(label, Math.min(x, b.x1 - 12), b.y1 + 15);
   });
 }
 
 function drawTop() {
-  const cx = ox + W / 2;
-  // 지수 줄: 종목명 | 현재가 · 등락률 · 남은 시간 (한 줄에)
+  // 1줄(y≈22): 현재가·등락률·남은 시간 (왼쪽 위는 일괄청산·투자중지)
   const chg = G.price / OPEN - 1, sec = Math.max(0, Math.ceil(ROUND - G.t));
   const urgent = ROUND - G.t <= 10;
   // 타이머 알약: 시계는 직접 그림 (이모지는 기기마다 폭이 달라 글자와 겹침)
@@ -1722,75 +1743,42 @@ function drawTop() {
   g.font = font(15, 800);
   g.fillText(`${pt(G.price)}  ${pctText(chg)}`, tx - 12, 27);
 
-  // 큰 숫자 = 지금 청산하면 남는 돈, 바로 옆에 손익 %
+  // 2줄(y≈58): 왼쪽 평가 자산 + 손익 %, 오른쪽 포지션·평가손익
   const u = unreal(), eq = G.money + u;
-  const rk = RANKS[rankIdx(eq)];
-  const label = G.pos ? '평가 자산 (지금 청산하면)' : '자산';
-  g.font = font(12, 800);
-  const rw = g.measureText(rk.name + '  ').width;
-  g.font = font(12, 600);
-  const lw = g.measureText(label).width;
-  g.textAlign = 'left';
-  g.fillStyle = rk.c;
-  g.font = font(12, 800);
-  g.fillText(rk.name, cx - (rw + lw) / 2, 50);
-  g.fillStyle = 'rgba(255,255,255,0.5)';
-  g.font = font(12, 600);
-  g.fillText(label, cx - (rw + lw) / 2 + rw, 50);
   const rate = G.pos ? u / posMargin() : (G.money - G.startMoney) / G.startMoney;
   const rc = rate >= 0 ? UP : DOWN;
-  g.font = font(30, 800);
+  const L = ox + 20, R = ox + W - 20, s = 1 + G.pulse * 0.1;
+  g.font = font(22, 800);
   const ew = g.measureText(won(eq)).width;
-  g.font = font(17, 800);
-  const pw = g.measureText(pctText(rate)).width;
-  const gx = cx - (ew + 10 + pw) / 2;
-  const scale = 1 + G.pulse * 0.12;
   g.save();
-  g.translate(gx + ew / 2, 82);
-  g.scale(scale, scale);
-  g.textAlign = 'center';
-  g.fillStyle = '#fff';
-  g.shadowColor = GOLD; g.shadowBlur = G.pulse * 24;
-  g.font = font(30, 800);
+  g.translate(L, 60); g.scale(s, s);
+  g.textAlign = 'left'; g.fillStyle = '#fff'; g.shadowColor = GOLD; g.shadowBlur = G.pulse * 20;
   g.fillText(won(eq), 0, 0);
   g.restore();
-  g.textAlign = 'left';
-  g.fillStyle = rc;
-  g.font = font(17, 800);
-  g.fillText(pctText(rate), gx + ew + 10, 81);
-
-  g.font = font(13, 600);
+  g.textAlign = 'left'; g.fillStyle = rc; g.font = font(14, 800);
+  g.fillText(pctText(rate), L + ew + 8, 59);
+  if (G.combo >= 2) { const pw = g.measureText(pctText(rate)).width; g.fillStyle = GOLD; g.font = font(12, 800); g.fillText(`콤보 x${G.combo}`, L + ew + 16 + pw, 59); }
+  g.textAlign = 'right';
   if (G.pos) {
-    g.textAlign = 'left';
-    g.fillStyle = G.pos.dir > 0 ? UP : DOWN;
-    g.font = font(13, 800);
-    g.font = font(12, 800);
-    g.fillText(`${sideName(G.pos.dir)} x${posUnits()} / 최대 ${G.cap}단 · 평균 ${avgEntry().toFixed(2)}`, ox + 20, 106);
-    g.font = font(13, 600);
-    g.textAlign = 'right';
-    g.fillStyle = rc;
-    g.fillText(`평가손익 ${sign(u)}`, ox + W - 20, 106);
+    g.fillStyle = G.pos.dir > 0 ? UP : DOWN; g.font = font(11, 800);
+    g.fillText(`${sideName(G.pos.dir)} x${posUnits()}/최대 ${G.cap}단 · 평균 ${avgEntry().toFixed(2)}`, R, 48);
+    g.fillStyle = rc; g.font = font(12, 800);
+    g.fillText(`평가손익 ${sign(u)}`, R, 64);
   } else {
-    g.textAlign = 'center';
-    g.fillStyle = 'rgba(255,255,255,0.45)';
-    g.fillText(`${G.lev}배 · 포지션 없음 · 이번 판 최대 ${G.cap}단`, cx, 106);
+    g.fillStyle = 'rgba(255,255,255,0.45)'; g.font = font(11, 600);
+    g.fillText(`${G.lev}배 · 포지션 없음`, R, 48);
+    g.fillText(`이번 판 최대 ${G.cap}단`, R, 64);
   }
-
+  // 시간 막대
   const left = Math.max(0, 1 - G.t / ROUND);
   g.fillStyle = 'rgba(255,255,255,0.08)';
-  roundRect(ox + 20, 118, W - 40, 6, 3); g.fill();
+  roundRect(ox + 16, 70, W - 32, 3, 1.5); g.fill();
   g.fillStyle = urgent ? UP : CYAN;
-  roundRect(ox + 20, 118, (W - 40) * left, 6, 3); g.fill();
-  if (G.combo >= 2) {
-    g.textAlign = 'left';
-    g.fillStyle = GOLD;
-    g.font = font(15, 800);
-    g.fillText(`콤보 x${G.combo}`, ox + 20, 142);
-  }
+  roundRect(ox + 16, 70, (W - 32) * left, 3, 1.5); g.fill();
 }
 
 function drawZones() {
-  const y0 = zoneTop(), h = H - y0 - 34, w = (W - 48) / 2;
+  const y0 = zoneTop(), h = Math.max(70, H - y0 - 30), w = (W - 48) / 2;
   const zones = [{ x: ox + 16, c: UP, side: 1, p: G.press.l }, { x: ox + 32 + w, c: DOWN, side: -1, p: G.press.r }]
     .map(z => Object.assign(z, zoneText(z.side)));
   const off = halted();
@@ -1859,7 +1847,8 @@ function fitFont(text, maxW, big, small, weight) {
   return fs;
 }
 
-const NEWS_H = 60, NEWS_Y = 186; // 뉴스 칸: 늘 같은 자리 (가운데 높이)
+const NEWS_H = 44;
+const newsCY = () => chartBox().y1 + 44; // 뉴스 칸: 차트 바로 아래 (가운데 높이)
 // 버튼 글자: 보유 방향이면 '추가', 반대면 '1단위 해제'
 function zoneText(side) {
   const n = posUnits(), nm = sideName(side);
@@ -1869,9 +1858,11 @@ function zoneText(side) {
 }
 
 function drawNews() {
-  const x = ox + 16, w = W - 32, h = NEWS_H, cy = NEWS_Y;
-  if (G.news && G.news.kind === 'boss') { drawBossBanner(ox + W / 2, cy, W - 24); return; }
-  if (!G.news) {
+  const x = ox + 16, w = W - 32, h = NEWS_H, cy = newsCY();
+  const boss = G.news && G.news.kind === 'boss';
+  // 보스는 예외: 차트 상단을 덮는 빨간 배너 (아래 뉴스 칸은 비워 둠)
+  if (boss) drawBossBanner(ox + W / 2, chartBox().y0 + BOSS_H / 2 - 6, W - 24);
+  if (!G.news || boss) {
     if (state !== 'play') return;
     // 뉴스가 없을 때도 자리 표시
     g.save();
@@ -1879,7 +1870,7 @@ function drawNews() {
     g.strokeStyle = 'rgba(255,255,255,0.16)'; g.lineWidth = 1.5; g.setLineDash([5, 6]);
     roundRect(x, cy - h / 2, w, h, 14); g.stroke(); g.setLineDash([]);
     g.fillStyle = 'rgba(255,255,255,0.32)'; g.font = font(15, 700); g.textAlign = 'center';
-    g.fillText('뉴스 대기 중…', ox + W / 2, cy + 5);
+    g.fillText(boss ? '보스 발동 중' : '뉴스 대기 중…', ox + W / 2, cy + 5);
     g.restore();
     return;
   }
@@ -1905,7 +1896,7 @@ function drawNews() {
     g.globalAlpha = 1;
   }
   const tw = newsTag(-w / 2 + 12, 0, tag, c, tag === '긴급' ? '#fff' : '#0b0f20');
-  const fs = fitFont(body, w - tw - 36, 17, 13, 800);
+  const fs = fitFont(body, w - tw - 36, 15, 11, 800);
   g.fillStyle = '#fff';
   g.textAlign = 'left';
   g.fillText(body, -w / 2 + tw + 24, fs * 0.36);
@@ -1956,7 +1947,7 @@ function drawDanger() {
   const left = Math.abs(G.price / liqPrice() - 1) * 100;
   const text = crit ? `⚠ 청산 임박! 청산가까지 ${left.toFixed(1)}%` : `청산 주의 · 청산가까지 ${left.toFixed(1)}%`;
   const c = crit ? ALERT : ORANGE;
-  const b = chartBox(), cx = (b.x0 + b.x1) / 2, y = b.y0 + 18;
+  const b = chartBox(), cx = (b.x0 + b.x1) / 2, y = b.y0 + (G.boss ? 70 : 18);
   g.font = font(14, 800);
   const w = g.measureText(text).width + 32;
   g.save();
@@ -2543,7 +2534,7 @@ function roundRect(x, y, w, h, r) {
 }
 
 // ---------- 입력 ----------
-function hit(x, y) { return G.buttons.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h); }
+function hit(x, y, pad = 0) { return G.buttons.find(b => x >= b.x - pad && x <= b.x + b.w + pad && y >= b.y - pad && y <= b.y + b.h + pad); }
 
 function tapAt(x, y) {
   ensureAudio();
@@ -2566,7 +2557,7 @@ function tapAt(x, y) {
     }
     return;
   }
-  if (state === 'ach' || state === 'analysis') { const b = hit(x, y); if (b) state = 'menu'; return; }
+  if (state === 'ach' || state === 'analysis') { draw(); const b = hit(x, y, 8); if (b) state = 'menu'; return; }
   if (state === 'margin') { const b = hit(x, y); if (b && b.act === 'mcok' && G.mc.age > 0.8) toMenu(); return; }
   if (state === 'over') {
     if (G.rankUp && !G.rankUp.done) { if (G.rankUp.age > 0.8) G.rankUp.done = true; return; }
